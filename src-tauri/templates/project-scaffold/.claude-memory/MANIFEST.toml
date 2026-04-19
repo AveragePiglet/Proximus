@@ -1,0 +1,25 @@
+schema_version = 1
+updated = ""
+
+[vocab]
+"→" = "calls/flows to"
+"⊥" = "forbidden"
+"⊤" = "required"
+"?" = "unknown/investigate"
+"!" = "broken/bug"
+"~" = "in progress"
+"@" = "file location"
+"#" = "stable ID reference"
+
+[precedence]
+order = ["invariants", "state", "graph", "nodes", "journal"]
+
+[load_order]
+always = ["invariants.toml", "state.toml", "graph.toml"]
+on_demand = ["nodes/*.toml"]
+archived = ["cold/*.toml"]
+
+[limits]
+max_node_file_lines = 120
+max_L1_tokens = 20
+max_L2_tokens = 80

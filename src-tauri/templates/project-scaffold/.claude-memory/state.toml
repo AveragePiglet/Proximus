@@ -1,0 +1,8 @@
+active_task = ""
+branch = "main"
+touched = []
+next_action = ""
+
+[context]
+why = ""
+refs = []
