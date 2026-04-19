@@ -2,7 +2,7 @@
 
 # Proximus Workspace
 
-A desktop workspace that wraps Claude Code in a native Tauri app with multi-tab terminals, a model-rewrite proxy, live memory graph visualization, and project scaffolding.
+A desktop workspace that wraps Claude Code in a native Tauri app with multi-tab terminals, a model-rewrite proxy, live memory graph visualization, theming, and project scaffolding.
 
 Built with **Tauri 2 · React 19 · Rust · xterm.js · Cytoscape**
 
@@ -61,6 +61,7 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 - **Memory migration** — Detects existing AI memory files (Cursor rules, AGENTS.md, CLAUDE.md, ADRs, etc.) and offers to migrate them into the structured .claude-memory system
 - **Context tracking** — Statusline integration shows context window usage per session
 - **Structured logging** — Captures backend events in a filterable sidebar panel
+- **Theme system** — 14 built-in themes (10 dark, 4 light) with live terminal recoloring and localStorage persistence
 - **Quick actions** — One-click access to common Claude Code commands
 
 ## How the Proxy Chain Works
@@ -108,6 +109,8 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │  │ │Projects │ │  └──────────────────────┘   │
 │  │ ├─────────┤ │                             │
 │  │ │ Logs    │ │                             │
+│  │ ├─────────┤ │                             │
+│  │ │ Theme   │ │                             │
 │  │ └─────────┘ │                             │
 │  └─────────────┘                             │
 └──────────────────────────────────────────────┘
@@ -148,11 +151,13 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │   │   ├── MigrationDialog.tsx # Memory migration popup (detect & convert existing AI memory)
 │   │   ├── LogsPanel.tsx       # Filtered structured log viewer
 │   │   ├── QuickActions.tsx    # One-click Claude Code commands
+│   │   ├── SettingsPanel.tsx   # Theme picker sidebar tab
 │   │   ├── StatusBar.tsx       # Bottom bar — context stats + process info
 │   │   └── StatusBadge.tsx     # Session state indicator
 │   └── hooks/
 │       ├── useMemoryGraph.ts   # Fetches & watches graph.toml / state.toml
 │       └── useProcessStatus.ts # Polls process health (proxy, copilot-api)
+│   themes.ts                   # 14 theme definitions + applyTheme() + listener system
 │
 ├── src-tauri/src/              # Rust backend
 │   ├── lib.rs                  # Tauri command registration (11 commands)
@@ -234,8 +239,19 @@ npm run tauri build
 | Claude Code ASCII animation pollutes xterm scrollback | Open |
 | Status badge doesn't reflect actual PTY state | Open |
 | Small black bar between terminal and quick actions (xterm row snapping) | Won't fix |
+| LogsPanel and MemoryGraphView use hard-coded colors (not theme-aware) | Open |
 
 ## Patch Notes
+
+### v0.4 — Theme System (2026-04-20)
+
+**New Features**
+- **14 built-in themes** — 10 dark (Tokyo Night, Catppuccin, Dracula, Nord, One Dark, Gruvbox, Solarized Dark, Rosé Pine, Kanagawa, GitHub Dark) and 4 light (Tokyo Night Light, Catppuccin Latte, GitHub Light, Solarized Light)
+- **Live terminal recoloring** — Switching themes updates xterm.js ANSI colors in real-time without restarting the session
+- **Theme tab in sidebar** — Visual theme picker with preview swatches in the Settings panel
+- **CSS variable architecture** — All UI colors reference `var()` tokens; zero hard-coded hex in components (except LogsPanel/MemoryGraphView — known issue)
+- **localStorage persistence** — Selected theme survives app restarts
+- **Listener system** — `onThemeChange()` API lets any component react to theme switches
 
 ### v0.3 — Memory Migration (2026-04-19)
 

@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getTheme, getSavedTheme, onThemeChange } from "../themes";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
@@ -46,8 +47,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
   useEffect(() => {
     if (!termRef.current) return;
 
+    const currentTheme = getTheme(getSavedTheme());
     const term = new XTerm({
-      theme: {
+      theme: currentTheme?.terminal ?? {
         background: "#1a1b26",
         foreground: "#a9b1d6",
         cursor: "#c0caf5",
@@ -173,7 +175,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
     term.writeln('Launching Claude Code...');
     term.writeln("");
 
+    // Listen for live theme changes
+    const unsubTheme = onThemeChange((theme) => {
+      term.options.theme = theme.terminal;
+    });
+
     return () => {
+      unsubTheme();
       unlistenPty.then((fn) => fn());
       resizeObserver.disconnect();
       term.dispose();

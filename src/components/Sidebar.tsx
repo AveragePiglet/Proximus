@@ -2,15 +2,17 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { MemoryGraphView } from "./MemoryGraphView";
 import { NodeDetail } from "./NodeDetail";
 import { LogsPanel } from "./LogsPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { useMemoryGraph, MemoryNode } from "../hooks/useMemoryGraph";
 
-type TabId = "graph" | "detail" | "state" | "logs";
+type TabId = "graph" | "detail" | "state" | "logs" | "settings";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "graph", label: "Graph" },
   { id: "detail", label: "Detail" },
   { id: "state", label: "State" },
   { id: "logs", label: "Logs" },
+  { id: "settings", label: "Theme" },
 ];
 
 const MIN_WIDTH = 200;
@@ -139,6 +141,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ tabId }) => {
             )}
 
             {activeTab === "logs" && <LogsPanel />}
+
+            {activeTab === "settings" && <SettingsPanel />}
           </div>
         </>
       )}
