@@ -6,6 +6,7 @@ import { TabBar } from "./components/TabBar";
 import { ProjectsView } from "./components/ProjectsView";
 import { StatusBar } from "./components/StatusBar";
 import { QuickActions } from "./components/QuickActions";
+import MigrationDialog from "./components/MigrationDialog";
 import { useTabStore } from "./hooks/useTabStore";
 import "./styles/global.css";
 
@@ -16,6 +17,8 @@ function App() {
     activeChatTabs,
     closedTabs,
     activeTabId,
+    migrationPending,
+    dismissMigration,
     createTab,
     createScratchTab,
     closeTab,
@@ -81,6 +84,14 @@ function App() {
         )}
         {!showProjects && activeTabId && <Sidebar tabId={activeTabId} />}
       </div>
+      {migrationPending && (
+        <MigrationDialog
+          projectPath={migrationPending.projectPath}
+          detectedFiles={migrationPending.files}
+          tabId={migrationPending.tabId}
+          onComplete={dismissMigration}
+        />
+      )}
     </div>
   );
 }

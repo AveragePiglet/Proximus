@@ -103,9 +103,25 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
 
 pub fn write_to_pty(state: &PtyState, data: &str) -> Result<(), String> {
     let mut writer = state.writer.lock().map_err(|e| format!("{}", e))?;
-    writer
-        .write_all(data.as_bytes())
-        .map_err(|e| format!("PTY write error: {}", e))?;
+
+    // Use bracketed paste mode for multi-line or large content
+    // This tells the terminal app (e.g. Claude Code) to treat it as pasted text
+    if data.contains('\n') || data.len() > 200 {
+        writer
+            .write_all(b"\x1b[200~")
+            .map_err(|e| format!("PTY write error: {}", e))?;
+        writer
+            .write_all(data.as_bytes())
+            .map_err(|e| format!("PTY write error: {}", e))?;
+        writer
+            .write_all(b"\x1b[201~")
+            .map_err(|e| format!("PTY write error: {}", e))?;
+    } else {
+        writer
+            .write_all(data.as_bytes())
+            .map_err(|e| format!("PTY write error: {}", e))?;
+    }
+
     writer.flush().map_err(|e| format!("PTY flush error: {}", e))?;
     Ok(())
 }

@@ -71,9 +71,61 @@ fn get_process_statuses(state: State<AppState>) -> Vec<ProcessStatus> {
 // ── Tab management commands ──────────────────────────────────────
 
 #[tauri::command]
+fn detect_project_memory(project_path: String) -> Result<Vec<String>, String> {
+    scaffold::detect_existing_memory(&project_path)
+}
+
+#[tauri::command]
+fn scaffold_project_cmd(project_path: String) -> Result<bool, String> {
+    scaffold::scaffold_project(&project_path)
+}
+
+#[tauri::command]
+fn update_claude_md_references(project_path: String) -> Result<bool, String> {
+    scaffold::update_claude_md_references(&project_path)
+}
+
+#[tauri::command]
+fn get_migration_file_contents(project_path: String, files: Vec<String>) -> Result<Vec<(String, String)>, String> {
+    let root = std::path::Path::new(&project_path);
+    let mut results = Vec::new();
+    for rel in &files {
+        let p = root.join(rel);
+        if p.is_file() {
+            let content = std::fs::read_to_string(&p)
+                .map_err(|e| format!("Failed to read {}: {}", rel, e))?;
+            results.push((rel.clone(), content));
+        } else if p.is_dir() {
+            // For directories, list their files
+            let mut entries = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&p) {
+                for entry in rd.flatten() {
+                    if entry.path().is_file() {
+                        if let Ok(c) = std::fs::read_to_string(entry.path()) {
+                            let name = format!("{}/{}", rel, entry.file_name().to_string_lossy());
+                            entries.push((name, c));
+                        }
+                    }
+                }
+            }
+            results.extend(entries);
+        }
+    }
+    Ok(results)
+}
+
+#[tauri::command]
 fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> Result<String, String> {
-    // Scaffold project if needed
-    scaffold::scaffold_project(&project_path)?;
+    // Only scaffold if no existing memory detected (migration handled separately by frontend)
+    let memory_dir_path = PathBuf::from(&project_path).join(".claude-memory");
+    if !memory_dir_path.exists() {
+        let existing = scaffold::detect_existing_memory(&project_path)?;
+        if existing.is_empty() {
+            // Fresh project — scaffold immediately
+            scaffold::scaffold_project(&project_path)?;
+        }
+        // else: has existing memory — frontend will handle migration dialog
+    }
 
     let tab_id = uuid::Uuid::new_v4().to_string();
     let memory_dir = PathBuf::from(&project_path).join(".claude-memory");
@@ -555,6 +607,10 @@ pub fn run() {
             // Tab management
             create_tab,
             create_scratch_tab,
+            detect_project_memory,
+            scaffold_project_cmd,
+            get_migration_file_contents,
+            update_claude_md_references,
             close_tab,
             close_tab_by_id,
             switch_tab,

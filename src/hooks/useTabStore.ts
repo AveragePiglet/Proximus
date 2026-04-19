@@ -12,10 +12,17 @@ export interface TabState {
   created_at: string;
 }
 
+export interface MigrationPending {
+  tabId: string;
+  projectPath: string;
+  files: string[];
+}
+
 export function useTabStore() {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [migrationPending, setMigrationPending] = useState<MigrationPending | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,6 +50,13 @@ export function useTabStore() {
     try {
       const tabId = await invoke<string>("create_tab", { projectPath: path });
       await refresh();
+
+      // Check if migration is needed (backend skips scaffold when existing memory found)
+      const detected = await invoke<string[]>("detect_project_memory", { projectPath: path });
+      if (detected.length > 0) {
+        setMigrationPending({ tabId, projectPath: path, files: detected });
+      }
+
       setLoading(false);
       return tabId;
     } catch (e) {
@@ -99,6 +113,8 @@ export function useTabStore() {
     closedTabs,
     activeTabId,
     loading,
+    migrationPending,
+    dismissMigration: () => setMigrationPending(null),
     createTab,
     createScratchTab,
     closeTab,

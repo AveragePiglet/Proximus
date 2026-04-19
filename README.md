@@ -58,6 +58,7 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 - **Model rewrite proxy** — Transparently routes Claude through GitHub Copilot's API, rewriting model names on the fly
 - **Live memory graph** — Visualize your project's knowledge graph in real-time with Cytoscape, click into nodes for detail
 - **Project scaffolding** — Spin up new projects pre-loaded with memory systems, skills, and conventions
+- **Memory migration** — Detects existing AI memory files (Cursor rules, AGENTS.md, CLAUDE.md, ADRs, etc.) and offers to migrate them into the structured .claude-memory system
 - **Context tracking** — Statusline integration shows context window usage per session
 - **Structured logging** — Captures backend events in a filterable sidebar panel
 - **Quick actions** — One-click access to common Claude Code commands
@@ -144,6 +145,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │   │   ├── MemoryGraphView.tsx # Live Cytoscape graph visualization
 │   │   ├── NodeDetail.tsx      # Graph node inspector panel
 │   │   ├── ProjectsView.tsx    # Project launcher / scaffolding UI
+│   │   ├── MigrationDialog.tsx # Memory migration popup (detect & convert existing AI memory)
 │   │   ├── LogsPanel.tsx       # Filtered structured log viewer
 │   │   ├── QuickActions.tsx    # One-click Claude Code commands
 │   │   ├── StatusBar.tsx       # Bottom bar — context stats + process info
@@ -158,7 +160,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │   ├── pty.rs                  # ConPTY spawn, I/O piping, resize
 │   ├── memory.rs               # TOML graph parser + file watcher
 │   ├── tab_store.rs            # Tab state persistence across sessions
-│   ├── scaffold.rs             # Embedded project template extraction
+│   ├── scaffold.rs             # Embedded project template extraction + memory detection
 │   └── logging.rs              # Circular log buffer (500 entries)
 │
 ├── assets/screenshots/         # App screenshots
@@ -234,6 +236,19 @@ npm run tauri build
 | Small black bar between terminal and quick actions (xterm row snapping) | Won't fix |
 
 ## Patch Notes
+
+### v0.3 — Memory Migration (2026-04-19)
+
+**New Features**
+- **Memory Migration Dialog** — When adding a project with existing AI memory/context files (`.cursorrules`, `CLAUDE.md`, `AGENTS.md`, `.ai/`, ADRs, etc.) but no `.claude-memory/`, a dialog offers three choices:
+  - **Migrate** — Scaffolds `.claude-memory/` and sends existing file contents to Claude for LLM-driven conversion into the structured TOML graph
+  - **Start Fresh** — Scaffolds a blank `.claude-memory/` ignoring existing files
+  - **Skip** — No memory system created
+- Detection is smart: only triggers on files with >10 lines (ignores empty stubs) and skips projects that already have `.claude-memory/` or have no AI memory at all
+
+**Backend**
+- New Tauri commands: `detect_project_memory`, `scaffold_project_cmd`, `get_migration_file_contents`
+- `create_tab` now defers scaffolding when existing memory is detected
 
 ### v0.2 — Terminal Input Overhaul (2026-04-19)
 
