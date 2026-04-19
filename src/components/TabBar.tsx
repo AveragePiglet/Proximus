@@ -1,4 +1,5 @@
 import React from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { TabState } from "../hooks/useTabStore";
 
 interface TabBarProps {
@@ -23,6 +24,18 @@ export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onSwitch, onC
           <span className="tab-name">
             {tab.tab_type === "chat" ? `💬 ${tab.project_name}` : tab.project_name}
           </span>
+          {tab.tab_type !== "chat" && tab.project_path && (
+            <button
+              className="tab-folder"
+              onClick={(e) => {
+                e.stopPropagation();
+                invoke("open_project_folder", { path: tab.project_path });
+              }}
+              title="Open project folder"
+            >
+              📂
+            </button>
+          )}
           <button
             className="tab-close"
             onClick={(e) => {

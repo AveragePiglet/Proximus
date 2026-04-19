@@ -54,6 +54,7 @@ If you've ever wished Claude Code came in an app with tabs, a sidebar, and a das
 Proximus Workspace is a native desktop application that turns Claude Code into a full IDE-like experience. Instead of running Claude in a bare terminal, Proximus gives you:
 
 - **Tabbed terminal sessions** — Run multiple Claude Code instances side by side with full ConPTY support
+- **Terminal keyboard shortcuts** — Ctrl+C (copy selection), Ctrl+V (paste), Ctrl+Z (undo typing in time-grouped chunks)
 - **Model rewrite proxy** — Transparently routes Claude through GitHub Copilot's API, rewriting model names on the fly
 - **Live memory graph** — Visualize your project's knowledge graph in real-time with Cytoscape, click into nodes for detail
 - **Project scaffolding** — Spin up new projects pre-loaded with memory systems, skills, and conventions
@@ -210,6 +211,14 @@ npm run tauri build
 | `get_log_entries` | Retrieve structured log buffer |
 | `get_statusline_stats` | Context window usage from statusline |
 
+## Terminal Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Copy selected text (passes SIGINT when no selection) |
+| `Ctrl+V` | Paste from clipboard |
+| `Ctrl+Z` | Undo last typing chunk (keystrokes grouped by 600ms pauses; paste undoes as one block) |
+
 ## Roadmap
 
 - [x] **Phase 1** — Core shell: Tauri app, PTY terminal, process management, proxy chain
@@ -223,6 +232,20 @@ npm run tauri build
 | Claude Code ASCII animation pollutes xterm scrollback | Open |
 | Status badge doesn't reflect actual PTY state | Open |
 | Small black bar between terminal and quick actions (xterm row snapping) | Won't fix |
+
+## Patch Notes
+
+### v0.2 — Terminal Input Overhaul (2026-04-19)
+
+**New Features**
+- **Ctrl+Z Undo** — Erases typing in time-grouped chunks (600ms grouping window). Each Ctrl+Z removes an entire burst of keystrokes. Pasted text always undoes as one block.
+- **Terminal Shortcuts table** added to README
+
+**Bug Fixes**
+- **Fixed double-paste on Ctrl+V** — Browser paste event was firing alongside the custom clipboard handler, causing text to appear twice. Fixed with `event.preventDefault()` on the keydown event.
+
+**Previous (v0.1)**
+- Initial release: Tauri app, multi-tab PTY terminals, model-rewrite proxy chain, live memory graph, project scaffolding, context tracking, structured logging, quick actions, session recovery, Ctrl+C/V clipboard support, open-folder button on tabs
 
 ## License
 

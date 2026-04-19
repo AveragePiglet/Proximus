@@ -466,6 +466,14 @@ fn get_node_content(state: State<AppState>, tab_id: String, node_id: String) -> 
     memory::read_node_file(&tab.memory_dir, &node_id)
 }
 
+// ── File explorer commands ───────────────────────────────────────
+
+#[tauri::command]
+async fn open_project_folder(path: String) -> Result<(), String> {
+    tauri_plugin_opener::reveal_item_in_dir(std::path::Path::new(&path))
+        .map_err(|e| e.to_string())
+}
+
 // ── Logging commands ─────────────────────────────────────────────
 
 #[tauri::command]
@@ -568,6 +576,8 @@ pub fn run() {
             get_node_content,
             // Logging
             get_log_history,
+            // File explorer
+            open_project_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

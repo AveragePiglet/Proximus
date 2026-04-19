@@ -558,6 +558,28 @@ html, body, #root {
   background: #f7768e22;
 }
 
+.tab-folder {
+  background: none;
+  border: none;
+  color: #565a6e;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.tab-item:hover .tab-folder {
+  opacity: 1;
+}
+
+.tab-folder:hover {
+  color: #7aa2f7;
+  background: #7aa2f722;
+}
+
 .tab-new {
   display: flex;
   align-items: center;

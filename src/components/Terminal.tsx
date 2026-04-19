@@ -75,8 +75,78 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
     fitAddon.fit();
     xtermRef.current = term;
 
+    // Undo buffer: groups of characters chunked by typing pauses
+    // Each entry is a group of chars typed within UNDO_GROUP_MS of each other
+    const UNDO_GROUP_MS = 600;
+    const undoGroups: string[][] = []; // each group is an array of chars
+    let lastInputTime = 0;
+
+    const pushToUndo = (chars: string[]) => {
+      const now = Date.now();
+      if (undoGroups.length === 0 || now - lastInputTime > UNDO_GROUP_MS) {
+        // Start a new group
+        undoGroups.push([...chars]);
+      } else {
+        // Append to current group
+        undoGroups[undoGroups.length - 1].push(...chars);
+      }
+      lastInputTime = now;
+    };
+
+    const popFromUndo = () => {
+      // Remove the last character from the latest group
+      if (undoGroups.length === 0) return;
+      undoGroups[undoGroups.length - 1].pop();
+      if (undoGroups[undoGroups.length - 1].length === 0) {
+        undoGroups.pop();
+      }
+    };
+
+    // Intercept Ctrl+C (copy), Ctrl+V (paste), Ctrl+Z (undo)
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      if (event.ctrlKey && event.key === "c" && term.hasSelection()) {
+        navigator.clipboard.writeText(term.getSelection());
+        term.clearSelection();
+        return false;
+      }
+      if (event.ctrlKey && event.key === "v") {
+        // preventDefault stops the browser from also firing a paste event
+        event.preventDefault();
+        navigator.clipboard.readText().then((text) => {
+          // Paste is always its own undo group
+          undoGroups.push([...text]);
+          lastInputTime = Date.now();
+          invoke("write_pty", { tabId, data: text }).catch(() => {});
+        });
+        return false;
+      }
+      if (event.ctrlKey && event.key === "z") {
+        event.preventDefault();
+        if (undoGroups.length > 0) {
+          const group = undoGroups.pop()!;
+          // Send one backspace per character in the group
+          const backspaces = "\x7f".repeat(group.length);
+          invoke("write_pty", { tabId, data: backspaces }).catch(() => {});
+        }
+        return false;
+      }
+      return true;
+    });
+
     // Send keystrokes to this tab's PTY
     term.onData((data) => {
+      // Track input for undo buffer
+      if (data === "\r" || data === "\n") {
+        // Enter pressed — clear undo history
+        undoGroups.length = 0;
+      } else if (data === "\x7f" || data === "\x08") {
+        // Backspace — pop one char from undo to stay in sync
+        popFromUndo();
+      } else if (data.length === 1 && data >= " ") {
+        // Regular printable character
+        pushToUndo([data]);
+      }
       invoke("write_pty", { tabId, data }).catch(() => {});
     });
 
