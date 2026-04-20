@@ -12,7 +12,6 @@ export function useProcessStatus() {
   const [statuses, setStatuses] = useState<ProcessStatus[]>([
     { name: "copilot-proxy", running: false, port: 4141 },
     { name: "model-rewriter", running: false, port: 4142 },
-    { name: "claude", running: false, port: null },
   ]);
 
   useEffect(() => {

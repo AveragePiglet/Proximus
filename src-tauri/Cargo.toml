@@ -27,3 +27,7 @@ tauri-plugin-dialog = "2"
 chrono = "0.4"
 dirs = "5"
 include_dir = "0.7"
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy"] }
+http-body-util = "0.1"
+bytes = "1"

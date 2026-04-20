@@ -60,7 +60,7 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 - **Project scaffolding** — Spin up new projects pre-loaded with memory systems, skills, and conventions
 - **Memory migration** — Detects existing AI memory files (Cursor rules, AGENTS.md, CLAUDE.md, ADRs, etc.) and offers to migrate them into the structured .claude-memory system
 - **Context tracking** — Statusline integration shows context window usage per session
-- **Structured logging** — Captures backend events in a filterable sidebar panel
+- **Structured logging** — Captures backend events in a sidebar panel with auto-scrolling
 - **Theme system** — 14 built-in themes (10 dark, 4 light) with live terminal recoloring and localStorage persistence
 - **Quick actions** — One-click access to common Claude Code commands
 
@@ -69,7 +69,7 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 Proximus doesn't call the Anthropic API directly. Instead it spins up a local proxy chain on startup:
 
 1. **copilot-api** (`:4141`) — GitHub Copilot's local API server, authenticated with your Copilot subscription
-2. **model-rewrite-proxy** (`:4142`) — A lightweight Node.js HTTP proxy that intercepts requests and rewrites model names (`claude-sonnet-4-20250514` → Copilot's internal model IDs)
+2. **model-rewrite-proxy** (`:4142`) — A built-in Rust HTTP proxy that intercepts requests and rewrites model names (`claude-sonnet-4-20250514` → Copilot's internal model IDs), with full SSE streaming support
 3. **Claude Code** connects to `:4142` thinking it's talking to Anthropic — but it's going through Copilot
 
 This means **zero Anthropic API costs**. You use Claude Code exactly as normal, but all usage counts against your GitHub Copilot plan instead. The proxy is transparent — no config changes needed in Claude Code itself.
@@ -120,6 +120,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 ┌──────────────────┐     ┌──────────────────┐
 │  copilot-api     │────▶│ model-rewrite    │
 │  :4141           │     │ proxy :4142      │
+│  (npx)           │     │ (built-in Rust)  │
 └──────────────────┘     └──────────────────┘
 ```
 
@@ -131,8 +132,8 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 | Frontend | React 19, TypeScript, Vite 7 |
 | Terminal | xterm.js 6 + ConPTY (Windows) |
 | Graph visualization | Cytoscape.js |
-| Backend | Rust 2021 (tokio, portable-pty, notify, serde) |
-| Proxy | Node.js HTTP proxy |
+| Backend | Rust 2021 (tokio, hyper, portable-pty, notify, serde) |
+| Proxy | Built-in Rust HTTP proxy (hyper) |
 | Memory | TOML-based graph (custom format) |
 
 ## Project Structure
@@ -149,7 +150,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │   │   ├── NodeDetail.tsx      # Graph node inspector panel
 │   │   ├── ProjectsView.tsx    # Project launcher / scaffolding UI
 │   │   ├── MigrationDialog.tsx # Memory migration popup (detect & convert existing AI memory)
-│   │   ├── LogsPanel.tsx       # Filtered structured log viewer
+│   │   ├── LogsPanel.tsx       # Timestamped log viewer
 │   │   ├── QuickActions.tsx    # One-click Claude Code commands
 │   │   ├── SettingsPanel.tsx   # Theme picker sidebar tab
 │   │   ├── StatusBar.tsx       # Bottom bar — context stats + process info
@@ -161,7 +162,8 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │
 ├── src-tauri/src/              # Rust backend
 │   ├── lib.rs                  # Tauri command registration (11 commands)
-│   ├── process_manager.rs      # copilot-api + model-rewrite-proxy lifecycle
+│   ├── process_manager.rs      # copilot-api lifecycle + port management
+│   ├── model_rewriter.rs       # Built-in HTTP proxy for model name rewriting
 │   ├── pty.rs                  # ConPTY spawn, I/O piping, resize
 │   ├── memory.rs               # TOML graph parser + file watcher
 │   ├── tab_store.rs            # Tab state persistence across sessions
@@ -179,7 +181,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 ## Prerequisites
 
 - **Windows 10/11** — ConPTY is required for terminal emulation
-- **Node.js 18+**
+- **Node.js 18+** — Required for copilot-api
 - **Rust toolchain** with MSVC build tools (`vcvarsall.bat x64`)
 - **GitHub Copilot** access for the proxy chain
 
@@ -242,6 +244,16 @@ npm run tauri build
 | LogsPanel and MemoryGraphView use hard-coded colors (not theme-aware) | Open |
 
 ## Patch Notes
+
+### v0.5 — Built-in Proxy & Log Cleanup (2026-04-20)
+
+**Breaking Changes**
+- **Model-rewrite proxy is now built into the Rust binary** — No longer requires `model-rewrite-proxy.js` or Node.js for the proxy layer (Node.js still needed for copilot-api). The exe is now self-contained for proxy functionality.
+
+**Improvements**
+- **Streaming SSE support** — The built-in proxy streams responses through instead of buffering, fixing timeouts on long Claude responses
+- **Simplified logs panel** — Removed filter chips and source/level tags; logs now show clean timestamped output with color-highlighted warnings/errors
+- **Removed phantom "claude" status badge** — Toolbar only shows copilot-proxy and model-rewriter badges (both backed by real status tracking)
 
 ### v0.4 — Theme System (2026-04-20)
 

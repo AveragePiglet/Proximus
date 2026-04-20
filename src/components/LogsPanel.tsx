@@ -9,26 +9,14 @@ interface LogEntry {
   message: string;
 }
 
-const SOURCES = ["proxy", "app", "pty", "memory"];
-const LEVELS = ["info", "warn", "error"];
-
 const LEVEL_COLORS: Record<string, string> = {
-  info: "#7aa2f7",
-  warn: "#e0af68",
-  error: "#f7768e",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  proxy: "#bb9af7",
-  app: "#7aa2f7",
-  pty: "#9ece6a",
-  memory: "#e0af68",
+  info: "var(--text-secondary)",
+  warn: "var(--warning, #e0af68)",
+  error: "var(--error, #f7768e)",
 };
 
 export const LogsPanel: React.FC = () => {
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set(SOURCES));
-  const [levelFilter, setLevelFilter] = useState<Set<string>>(new Set(LEVELS));
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -63,26 +51,6 @@ export const LogsPanel: React.FC = () => {
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 40);
   }, []);
 
-  const toggleSource = (src: string) => {
-    setSourceFilter((prev) => {
-      const next = new Set(prev);
-      next.has(src) ? next.delete(src) : next.add(src);
-      return next;
-    });
-  };
-
-  const toggleLevel = (lvl: string) => {
-    setLevelFilter((prev) => {
-      const next = new Set(prev);
-      next.has(lvl) ? next.delete(lvl) : next.add(lvl);
-      return next;
-    });
-  };
-
-  const filtered = entries.filter(
-    (e) => sourceFilter.has(e.source) && levelFilter.has(e.level)
-  );
-
   const formatTime = (ts: string) => {
     try {
       const d = new Date(ts);
@@ -96,62 +64,30 @@ export const LogsPanel: React.FC = () => {
     <div className="side-panel-content logs-panel">
       <div className="sidebar-section-header">
         <h3>Logs</h3>
-        <span className="logs-count">{filtered.length}</span>
-      </div>
-
-      {/* Filter chips */}
-      <div className="logs-filters">
-        <div className="logs-filter-row">
-          {SOURCES.map((src) => (
-            <button
-              key={src}
-              className={`logs-chip${sourceFilter.has(src) ? " active" : ""}`}
-              style={{
-                borderColor: sourceFilter.has(src)
-                  ? SOURCE_COLORS[src]
-                  : undefined,
-              }}
-              onClick={() => toggleSource(src)}
-            >
-              {src}
-            </button>
-          ))}
-        </div>
-        <div className="logs-filter-row">
-          {LEVELS.map((lvl) => (
-            <button
-              key={lvl}
-              className={`logs-chip${levelFilter.has(lvl) ? " active" : ""}`}
-              style={{
-                borderColor: levelFilter.has(lvl)
-                  ? LEVEL_COLORS[lvl]
-                  : undefined,
-              }}
-              onClick={() => toggleLevel(lvl)}
-            >
-              {lvl}
-            </button>
-          ))}
-        </div>
+        <span className="logs-count">{entries.length}</span>
       </div>
 
       {/* Log entries */}
       <div className="logs-scroll" ref={scrollRef} onScroll={handleScroll}>
-        {filtered.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="sidebar-placeholder">
             <p>No log entries</p>
           </div>
         ) : (
-          filtered.map((entry, i) => (
-            <div key={i} className={`log-entry log-level-${entry.level}`}>
+          entries.map((entry, i) => (
+            <div key={i} className="log-entry">
               <span className="log-time">{formatTime(entry.timestamp)}</span>
               <span
-                className="log-source"
-                style={{ color: SOURCE_COLORS[entry.source] || "#a9b1d6" }}
+                className="log-message"
+                style={{
+                  color:
+                    entry.level !== "info"
+                      ? LEVEL_COLORS[entry.level]
+                      : undefined,
+                }}
               >
-                {entry.source}
+                {entry.message}
               </span>
-              <span className="log-message">{entry.message}</span>
             </div>
           ))
         )}

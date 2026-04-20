@@ -122,7 +122,7 @@ pub struct PortAssignments {
 
 pub struct ManagedProcesses {
     pub copilot_proxy: Arc<Mutex<Option<Child>>>,
-    pub model_rewriter: Arc<Mutex<Option<Child>>>,
+    pub model_rewriter_running: Arc<Mutex<bool>>,
     pub ports: Arc<Mutex<PortAssignments>>,
 }
 
@@ -130,7 +130,7 @@ impl ManagedProcesses {
     pub fn new() -> Self {
         Self {
             copilot_proxy: Arc::new(Mutex::new(None)),
-            model_rewriter: Arc::new(Mutex::new(None)),
+            model_rewriter_running: Arc::new(Mutex::new(false)),
             ports: Arc::new(Mutex::new(PortAssignments {
                 copilot_proxy: 4141,
                 model_rewriter: 4142,
@@ -211,11 +211,9 @@ impl ManagedProcesses {
         &self,
         app: &AppHandle,
         logs: &LogBuffer,
-        project_dir: &str,
         upstream_port: u16,
     ) -> Result<u16, String> {
         let port = find_available_port(upstream_port + 1);
-        let proxy_path = std::path::Path::new(project_dir).join("model-rewrite-proxy.js");
 
         logging::emit_log(
             app,
@@ -228,42 +226,19 @@ impl ManagedProcesses {
             ),
         );
 
-        let mut child = Command::new("cmd")
-            .args([
-                "/c",
-                "node",
-                proxy_path.to_str().unwrap_or("model-rewrite-proxy.js"),
-            ])
-            .env(
-                "REWRITE_UPSTREAM",
-                format!("http://localhost:{}", upstream_port),
-            )
-            .env("REWRITE_PORT", port.to_string())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("Failed to start model rewriter: {}", e))?;
+        // Start the built-in Rust proxy
+        crate::model_rewriter::start(upstream_port, port);
 
-        // Pipe stdout/stderr into log system
-        let logs_arc = Arc::new(logs.clone_inner());
-        if let Some(stdout) = child.stdout.take() {
-            pipe_output_to_logs(stdout, app.clone(), logs_arc.clone(), "proxy".into());
-        }
-        if let Some(stderr) = child.stderr.take() {
-            pipe_output_to_logs(stderr, app.clone(), logs_arc, "proxy".into());
-        }
+        *self.model_rewriter_running.lock().unwrap() = true;
+        self.ports.lock().unwrap().model_rewriter = port;
 
         logging::emit_log(
             app,
             logs,
             "proxy",
             "info",
-            &format!("model-rewrite-proxy started (PID {})", child.id()),
+            &format!("model-rewrite-proxy started (built-in, port {})", port),
         );
-
-        *self.model_rewriter.lock().unwrap() = Some(child);
-        self.ports.lock().unwrap().model_rewriter = port;
 
         let _ = app.emit(
             "process-status",
@@ -289,12 +264,8 @@ impl ManagedProcesses {
             }
             *child = None;
         }
-        if let Ok(mut child) = self.model_rewriter.lock() {
-            if let Some(ref mut c) = *child {
-                tree_kill(c);
-            }
-            *child = None;
-        }
+        // Model rewriter is an in-process tokio task — it dies with the app
+        *self.model_rewriter_running.lock().unwrap() = false;
     }
 
     pub fn get_statuses(&self) -> Vec<ProcessStatus> {
@@ -314,18 +285,7 @@ impl ManagedProcesses {
             })
             .unwrap_or(false);
 
-        let rewriter_running = self
-            .model_rewriter
-            .lock()
-            .map(|mut c| match c.as_mut() {
-                Some(child) => match child.try_wait() {
-                    Ok(None) => true,
-                    Ok(Some(_)) => false,
-                    Err(_) => false,
-                },
-                None => false,
-            })
-            .unwrap_or(false);
+        let rewriter_running = *self.model_rewriter_running.lock().unwrap_or_else(|e| e.into_inner());
 
         vec![
             ProcessStatus {

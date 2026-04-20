@@ -1,5 +1,6 @@
 mod logging;
 mod memory;
+mod model_rewriter;
 mod process_manager;
 mod pty;
 mod scaffold;
@@ -39,7 +40,6 @@ struct AppState {
     tabs: Mutex<HashMap<String, TabInfo>>,
     active_tab: Mutex<Option<String>>,
     app_data_dir: PathBuf,
-    workspace_root: String, // where model-rewrite-proxy.js lives
     tab_store: Mutex<tab_store::TabStore>,
 }
 
@@ -53,7 +53,7 @@ fn start_copilot_proxy(state: State<AppState>, app: AppHandle) -> Result<u16, St
 
 #[tauri::command]
 fn start_model_rewriter(state: State<AppState>, app: AppHandle, upstream_port: u16) -> Result<u16, String> {
-    state.processes.start_model_rewriter(&app, &state.logs, &state.workspace_root, upstream_port)
+    state.processes.start_model_rewriter(&app, &state.logs, upstream_port)
 }
 
 #[tauri::command]
@@ -570,29 +570,12 @@ pub fn run() {
             }
             eprintln!("[workspace] Restored {} active tabs (without PTY)", runtime_tabs.len());
 
-            // Find workspace root (where model-rewrite-proxy.js lives)
-            // Walk up from the executable's directory
-            let workspace_root = {
-                let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let mut found = dir.clone();
-                for _ in 0..5 {
-                    if dir.join("model-rewrite-proxy.js").exists() {
-                        found = dir.clone();
-                        break;
-                    }
-                    if !dir.pop() { break; }
-                }
-                found.to_string_lossy().to_string()
-            };
-            eprintln!("[workspace] workspace_root = {:?}", workspace_root);
-
             app.manage(AppState {
                 processes: ManagedProcesses::new(),
                 logs: LogBuffer::new(),
                 tabs: Mutex::new(runtime_tabs),
                 active_tab: Mutex::new(store.active_tab_id.clone()),
                 app_data_dir,
-                workspace_root,
                 tab_store: Mutex::new(store),
             });
 
