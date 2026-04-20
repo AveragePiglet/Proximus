@@ -122,7 +122,7 @@ pub struct PortAssignments {
 
 pub struct ManagedProcesses {
     pub copilot_proxy: Arc<Mutex<Option<Child>>>,
-    pub model_rewriter_running: Arc<Mutex<bool>>,
+    pub model_rewriter_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     pub ports: Arc<Mutex<PortAssignments>>,
 }
 
@@ -130,7 +130,7 @@ impl ManagedProcesses {
     pub fn new() -> Self {
         Self {
             copilot_proxy: Arc::new(Mutex::new(None)),
-            model_rewriter_running: Arc::new(Mutex::new(false)),
+            model_rewriter_handle: Arc::new(Mutex::new(None)),
             ports: Arc::new(Mutex::new(PortAssignments {
                 copilot_proxy: 4141,
                 model_rewriter: 4142,
@@ -207,12 +207,20 @@ impl ManagedProcesses {
         Ok(port)
     }
 
-    pub fn start_model_rewriter(
+    pub async fn start_model_rewriter(
         &self,
         app: &AppHandle,
         logs: &LogBuffer,
         upstream_port: u16,
     ) -> Result<u16, String> {
+        // Abort any existing model rewriter task first
+        if let Ok(mut handle) = self.model_rewriter_handle.lock() {
+            if let Some(h) = handle.take() {
+                h.abort();
+                eprintln!("[rewrite] Aborted previous model-rewriter task");
+            }
+        }
+
         let port = find_available_port(upstream_port + 1);
 
         logging::emit_log(
@@ -226,10 +234,10 @@ impl ManagedProcesses {
             ),
         );
 
-        // Start the built-in Rust proxy
-        crate::model_rewriter::start(upstream_port, port);
+        // Start the built-in Rust proxy — awaits until port is confirmed bound
+        let handle = crate::model_rewriter::start(upstream_port, port).await?;
 
-        *self.model_rewriter_running.lock().unwrap() = true;
+        *self.model_rewriter_handle.lock().unwrap() = Some(handle);
         self.ports.lock().unwrap().model_rewriter = port;
 
         logging::emit_log(
@@ -264,8 +272,13 @@ impl ManagedProcesses {
             }
             *child = None;
         }
-        // Model rewriter is an in-process tokio task — it dies with the app
-        *self.model_rewriter_running.lock().unwrap() = false;
+        // Abort the model rewriter tokio task
+        if let Ok(mut handle) = self.model_rewriter_handle.lock() {
+            if let Some(h) = handle.take() {
+                h.abort();
+                eprintln!("[rewrite] Model rewriter task aborted");
+            }
+        }
     }
 
     pub fn get_statuses(&self) -> Vec<ProcessStatus> {
@@ -285,7 +298,11 @@ impl ManagedProcesses {
             })
             .unwrap_or(false);
 
-        let rewriter_running = *self.model_rewriter_running.lock().unwrap_or_else(|e| e.into_inner());
+        let rewriter_running = self
+            .model_rewriter_handle
+            .lock()
+            .map(|h| h.is_some())
+            .unwrap_or(false);
 
         vec![
             ProcessStatus {

@@ -5,6 +5,25 @@ import { useProcessStatus } from "../hooks/useProcessStatus";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Poll until copilot-proxy reports running, or timeout */
+const waitForCopilotProxy = async (
+  _port: number,
+  timeoutMs = 15000
+): Promise<void> => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const statuses = await invoke<Array<{ name: string; running: boolean }>>(
+        "get_process_statuses"
+      );
+      const copilot = statuses.find((s) => s.name === "copilot-proxy");
+      if (copilot?.running) return;
+    } catch {}
+    await sleep(500);
+  }
+  // Timeout — proceed anyway, model-rewriter will give a clear error if upstream isn't ready
+};
+
 export const Toolbar: React.FC = () => {
   const statuses = useProcessStatus();
   const [error, setError] = useState<string | null>(null);
@@ -27,8 +46,8 @@ export const Toolbar: React.FC = () => {
       return;
     }
 
-    setStatus(`Waiting for proxy on :${proxyPort}...`);
-    await sleep(4000);
+    setStatus(`Waiting for copilot proxy on :${proxyPort}...`);
+    await waitForCopilotProxy(proxyPort);
 
     try {
       setStatus("Starting model rewriter...");

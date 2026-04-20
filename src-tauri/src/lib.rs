@@ -52,8 +52,8 @@ fn start_copilot_proxy(state: State<AppState>, app: AppHandle) -> Result<u16, St
 }
 
 #[tauri::command]
-fn start_model_rewriter(state: State<AppState>, app: AppHandle, upstream_port: u16) -> Result<u16, String> {
-    state.processes.start_model_rewriter(&app, &state.logs, upstream_port)
+async fn start_model_rewriter(state: State<'_, AppState>, app: AppHandle, upstream_port: u16) -> Result<u16, String> {
+    state.processes.start_model_rewriter(&app, &state.logs, upstream_port).await
 }
 
 #[tauri::command]

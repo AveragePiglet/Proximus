@@ -8,6 +8,7 @@ use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 
 /// Response body type: either a streamed upstream response or a local error body
 type RespBody = Either<Incoming, Full<Bytes>>;
@@ -144,18 +145,23 @@ async fn handle_request(
 }
 
 /// Start the model-rewrite proxy on `listen_port`, forwarding to `upstream_port`.
-/// Spawns via tauri's async runtime and returns immediately.
-pub fn start(upstream_port: u16, listen_port: u16) {
+/// Returns a JoinHandle after confirming the port is bound.
+/// Caller must `.await` this to confirm the proxy started successfully.
+pub async fn start(upstream_port: u16, listen_port: u16) -> Result<tauri::async_runtime::JoinHandle<()>, String> {
     let state = Arc::new(ProxyState {
         upstream: format!("http://localhost:{}", upstream_port),
     });
 
-    tauri::async_runtime::spawn(async move {
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+
+    let handle = tauri::async_runtime::spawn(async move {
         let addr = SocketAddr::from(([127, 0, 0, 1], listen_port));
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("[rewrite] Failed to bind port {}: {}", listen_port, e);
+                let msg = format!("Failed to bind port {}: {}", listen_port, e);
+                eprintln!("[rewrite] {}", msg);
+                let _ = ready_tx.send(Err(msg));
                 return;
             }
         };
@@ -164,6 +170,9 @@ pub fn start(upstream_port: u16, listen_port: u16) {
             "[rewrite] Model-rewrite proxy listening on :{} → http://localhost:{}",
             listen_port, upstream_port
         );
+
+        // Signal that bind succeeded
+        let _ = ready_tx.send(Ok(()));
 
         loop {
             let (stream, _) = match listener.accept().await {
@@ -192,4 +201,11 @@ pub fn start(upstream_port: u16, listen_port: u16) {
             });
         }
     });
+
+    // Wait for bind confirmation
+    match ready_rx.await {
+        Ok(Ok(())) => Ok(handle),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("Model rewriter task exited before signaling readiness".into()),
+    }
 }
