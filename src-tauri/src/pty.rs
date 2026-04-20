@@ -29,14 +29,15 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
         })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let mut cmd = CommandBuilder::new("cmd");
+    let shell = if cfg!(windows) { "cmd" } else { "bash" };
+    let mut cmd = CommandBuilder::new(shell);
     cmd.env("ANTHROPIC_BASE_URL", format!("http://localhost:{}", rewriter_port));
     cmd.env("DISABLE_NON_ESSENTIAL_MODEL_CALLS", "1");
     cmd.env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
     cmd.env("TERM", "xterm-256color");
     cmd.cwd(project_dir);
 
-    eprintln!("[workspace] PTY[{}]: spawning cmd.exe in {:?}", tab_id, project_dir);
+    eprintln!("[workspace] PTY[{}]: spawning {} in {:?}", tab_id, shell, project_dir);
 
     let child = pair
         .slave
@@ -55,10 +56,11 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
         if let Ok(mut w) = writer_clone.lock() {
+            let clear = if cfg!(windows) { "cls" } else { "clear" };
             if has_memory {
-                let _ = w.write_all(b"cls && claude \"Load Memory\"\r\n");
+                let _ = w.write_all(format!("{} && claude \"Load Memory\"\r\n", clear).as_bytes());
             } else {
-                let _ = w.write_all(b"cls && claude\r\n");
+                let _ = w.write_all(format!("{} && claude\r\n", clear).as_bytes());
             }
             let _ = w.flush();
             eprintln!("[workspace] PTY[{}]: launched claude (has_memory={})", tab_id_launch, has_memory);

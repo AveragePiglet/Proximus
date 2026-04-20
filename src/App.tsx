@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { TitleBar } from "./components/TitleBar";
 import { Toolbar } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal, TerminalHandle } from "./components/Terminal";
@@ -55,6 +56,7 @@ function App() {
 
   return (
     <div className="app">
+      <TitleBar />
       <Toolbar />
       <TabBar
         tabs={activeTabs}

@@ -1,3 +1,8 @@
+/* Hide xterm cursor completely — it jumps around during Claude output */
+.xterm .xterm-cursor-layer {
+  display: none !important;
+}
+
 :root {
   --bg-primary: #1a1b26;
   --bg-secondary: #16161e;
@@ -36,6 +41,66 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+/* Titlebar — custom window chrome */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.titlebar-icon {
+  font-size: 14px;
+}
+
+.titlebar-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.titlebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.titlebar-close:hover {
+  background: var(--accent-red);
+  color: #fff;
 }
 
 /* Toolbar */

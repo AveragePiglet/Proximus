@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -9,7 +10,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::logging::{self, LogBuffer};
 
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Check if a port is in use by attempting a TCP connection to it.
@@ -44,29 +47,52 @@ fn find_available_port(preferred: u16) -> u16 {
 }
 
 /// Kill any process listening on a given port (orphan cleanup).
-/// Uses netstat + taskkill on Windows.
 fn kill_process_on_port(port: u16, app: Option<&AppHandle>, logs: Option<&LogBuffer>) {
-    let output = Command::new("cmd")
-        .args(["/c", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+    #[cfg(windows)]
+    let output = {
+        Command::new("cmd")
+            .args(["/c", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    };
+
+    #[cfg(not(windows))]
+    let output = {
+        Command::new("sh")
+            .args(["-c", &format!("lsof -ti :{}", port)])
+            .output()
+    };
 
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
-            // netstat line format: "  TCP    0.0.0.0:4141    0.0.0.0:0    LISTENING    12345"
-            if let Some(pid_str) = line.split_whitespace().last() {
-                if let Ok(pid) = pid_str.parse::<u32>() {
-                    if pid > 0 {
-                        let msg = format!("Killing orphan process PID {} on port {}", pid, port);
-                        if let (Some(app), Some(logs)) = (app, logs) {
-                            logging::emit_log(app, logs, "proxy", "warn", &msg);
-                        } else {
-                            eprintln!("[workspace] {}", msg);
-                        }
+            let pid = {
+                #[cfg(windows)]
+                { line.split_whitespace().last().and_then(|s| s.parse::<u32>().ok()) }
+                #[cfg(not(windows))]
+                { line.trim().parse::<u32>().ok() }
+            };
+
+            if let Some(pid) = pid {
+                if pid > 0 {
+                    let msg = format!("Killing orphan process PID {} on port {}", pid, port);
+                    if let (Some(app), Some(logs)) = (app, logs) {
+                        logging::emit_log(app, logs, "proxy", "warn", &msg);
+                    } else {
+                        eprintln!("[workspace] {}", msg);
+                    }
+
+                    #[cfg(windows)]
+                    {
                         let _ = Command::new("taskkill")
                             .args(["/T", "/F", "/PID", &pid.to_string()])
                             .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let _ = Command::new("kill")
+                            .args(["-9", &pid.to_string()])
                             .output();
                     }
                 }
@@ -75,13 +101,25 @@ fn kill_process_on_port(port: u16, app: Option<&AppHandle>, logs: Option<&LogBuf
     }
 }
 
-/// Kill an entire process tree on Windows using taskkill /T /F
+/// Kill an entire process tree
 fn tree_kill(child: &mut Child) {
     let pid = child.id();
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        // Send SIGKILL to the process group
+        let _ = Command::new("kill")
+            .args(["-9", &format!("-{}", pid)])
+            .output();
+    }
+
     // Reap the child so we don't leave a zombie handle
     let _ = child.wait();
 }
@@ -132,8 +170,8 @@ impl ManagedProcesses {
             copilot_proxy: Arc::new(Mutex::new(None)),
             model_rewriter_handle: Arc::new(Mutex::new(None)),
             ports: Arc::new(Mutex::new(PortAssignments {
-                copilot_proxy: 4141,
-                model_rewriter: 4142,
+                copilot_proxy: if cfg!(debug_assertions) { 4151 } else { 4141 },
+                model_rewriter: if cfg!(debug_assertions) { 4152 } else { 4142 },
             })),
         }
     }
@@ -157,21 +195,31 @@ impl ManagedProcesses {
     }
 
     pub fn start_copilot_proxy(&self, app: &AppHandle, logs: &LogBuffer) -> Result<u16, String> {
-        let port = find_available_port(4141);
+        let base = {
+            let ports = self.ports.lock().unwrap();
+            ports.copilot_proxy
+        };
+        let port = find_available_port(base);
         logging::emit_log(app, logs, "proxy", "info", &format!("Starting copilot-api on port {}", port));
 
-        let mut child = Command::new("cmd")
-            .args([
-                "/c",
-                "npx",
-                "copilot-api@latest",
-                "start",
-                "-p",
-                &port.to_string(),
-            ])
+        let mut cmd = Command::new({
+            #[cfg(windows)] { "cmd" }
+            #[cfg(not(windows))] { "npx" }
+        });
+
+        #[cfg(windows)]
+        {
+            cmd.args(["/c", "npx", "copilot-api@latest", "start", "-p", &port.to_string()]);
+            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.args(["copilot-api@latest", "start", "-p", &port.to_string()]);
+        }
+
+        let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to start copilot proxy: {}", e))?;
 

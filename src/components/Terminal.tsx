@@ -52,7 +52,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
       theme: currentTheme?.terminal ?? {
         background: "#1a1b26",
         foreground: "#a9b1d6",
-        cursor: "#c0caf5",
+        cursor: "transparent",
         selectionBackground: "#33467c",
         black: "#15161e",
         red: "#f7768e",
@@ -65,8 +65,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
       },
       fontSize: 14,
       fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-      cursorBlink: true,
+      cursorBlink: false,
       cursorStyle: "bar",
+      cursorInactiveStyle: "none",
       scrollback: 5000,
       allowProposedApi: true,
     });
@@ -177,7 +178,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
 
     // Listen for live theme changes
     const unsubTheme = onThemeChange((theme) => {
-      term.options.theme = theme.terminal;
+      term.options.theme = { ...theme.terminal, cursor: "transparent" };
     });
 
     return () => {

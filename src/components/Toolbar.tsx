@@ -97,7 +97,6 @@ export const Toolbar: React.FC = () => {
 
   return (
     <div className="toolbar">
-      <div className="toolbar-title">Proximus</div>
       <div className="toolbar-statuses">
         {statuses.map((s) => (
           <StatusBadge key={s.name} {...s} />

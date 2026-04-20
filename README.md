@@ -53,7 +53,7 @@ If you've ever wished Claude Code came in an app with tabs, a sidebar, and a das
 
 Proximus Workspace is a native desktop application that turns Claude Code into a full IDE-like experience. Instead of running Claude in a bare terminal, Proximus gives you:
 
-- **Tabbed terminal sessions** — Run multiple Claude Code instances side by side with full ConPTY support
+- **Tabbed terminal sessions** — Run multiple Claude Code instances side by side with native PTY support (ConPTY on Windows, PTY on macOS/Linux)
 - **Terminal keyboard shortcuts** — Ctrl+C (copy selection), Ctrl+V (paste), Ctrl+Z (undo typing in time-grouped chunks)
 - **Model rewrite proxy** — Transparently routes Claude through GitHub Copilot's API, rewriting model names on the fly
 - **Live memory graph** — Visualize your project's knowledge graph in real-time with Cytoscape, click into nodes for detail
@@ -68,9 +68,9 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 
 Proximus doesn't call the Anthropic API directly. Instead it spins up a local proxy chain on startup:
 
-1. **copilot-api** (`:4141`) — GitHub Copilot's local API server, authenticated with your Copilot subscription
-2. **model-rewrite-proxy** (`:4142`) — A built-in Rust HTTP proxy that intercepts requests and rewrites model names (`claude-sonnet-4-20250514` → Copilot's internal model IDs), with full SSE streaming support
-3. **Claude Code** connects to `:4142` thinking it's talking to Anthropic — but it's going through Copilot
+1. **copilot-api** (`:4141` release / `:4151` dev) — GitHub Copilot's local API server, authenticated with your Copilot subscription
+2. **model-rewrite-proxy** (`:4142` release / `:4152` dev) — A built-in Rust HTTP proxy that intercepts requests and rewrites model names (`claude-sonnet-4-20250514` → Copilot's internal model IDs), with full SSE streaming support
+3. **Claude Code** connects to the rewrite proxy thinking it's talking to Anthropic — but it's going through Copilot
 
 This means **zero Anthropic API costs**. You use Claude Code exactly as normal, but all usage counts against your GitHub Copilot plan instead. The proxy is transparent — no config changes needed in Claude Code itself.
 
@@ -97,7 +97,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │       │          │               │           │
 │  ┌────▼──────────▼───────────────▼────────┐  │
 │  │          Terminal (xterm.js)            │  │
-│  │            ConPTY ↔ Claude Code         │  │
+│  │            PTY ↔ Claude Code              │  │
 │  └────────────────────────────────────────┘  │
 │                                              │
 │  ┌─────────────┐  ┌──────────────────────┐   │
@@ -130,7 +130,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 |-------|-----------|
 | Desktop framework | Tauri 2 |
 | Frontend | React 19, TypeScript, Vite 7 |
-| Terminal | xterm.js 6 + ConPTY (Windows) |
+| Terminal | xterm.js 6 + ConPTY (Windows) / PTY (macOS/Linux) |
 | Graph visualization | Cytoscape.js |
 | Backend | Rust 2021 (tokio, hyper, portable-pty, notify, serde) |
 | Proxy | Built-in Rust HTTP proxy (hyper) |
@@ -142,7 +142,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 ├── src/                        # React frontend
 │   ├── App.tsx                 # Root layout — toolbar + sidebar + terminal
 │   ├── components/
-│   │   ├── Terminal.tsx        # xterm.js terminal with ConPTY bridge
+│   │   ├── Terminal.tsx        # xterm.js terminal with native PTY bridge
 │   │   ├── TabBar.tsx          # Multi-tab session management
 │   │   ├── Toolbar.tsx         # Top toolbar controls
 │   │   ├── Sidebar.tsx         # Collapsible sidebar container
@@ -162,9 +162,9 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │
 ├── src-tauri/src/              # Rust backend
 │   ├── lib.rs                  # Tauri command registration (11 commands)
-│   ├── process_manager.rs      # copilot-api lifecycle + port management
+│   ├── process_manager.rs      # copilot-api lifecycle + port management (cross-platform)
 │   ├── model_rewriter.rs       # Built-in HTTP proxy for model name rewriting
-│   ├── pty.rs                  # ConPTY spawn, I/O piping, resize
+│   ├── pty.rs                  # PTY spawn, I/O piping, resize (ConPTY on Windows, PTY on Unix)
 │   ├── memory.rs               # TOML graph parser + file watcher
 │   ├── tab_store.rs            # Tab state persistence across sessions
 │   ├── scaffold.rs             # Embedded project template extraction + memory detection
@@ -172,18 +172,42 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │
 ├── assets/screenshots/         # App screenshots
 ├── public/                     # Static assets
-├── dev.bat                     # Dev mode launcher
-├── build.bat                   # Production build script
+├── dev.bat                     # Dev mode launcher (Windows)
+├── build.bat                   # Production build script (Windows)
 ├── vite.config.ts              # Vite configuration
 └── package.json                # Frontend dependencies
 ```
 
 ## Prerequisites
 
-- **Windows 10/11** — ConPTY is required for terminal emulation
+### All Platforms
 - **Node.js 18+** — Required for copilot-api
-- **Rust toolchain** with MSVC build tools (`vcvarsall.bat x64`)
+- **Rust toolchain** — [rustup.rs](https://rustup.rs)
 - **GitHub Copilot** access for the proxy chain
+
+### Windows
+- **Windows 10/11** — ConPTY is used for terminal emulation
+- **MSVC build tools** — `vcvarsall.bat x64` (install via Visual Studio Build Tools)
+
+### macOS
+- **Xcode Command Line Tools** — `xcode-select --install`
+- macOS 10.15+ recommended
+
+### Linux
+- **System dependencies** — Tauri requires several packages (varies by distro):
+  ```bash
+  # Debian/Ubuntu
+  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+    libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+  # Fedora
+  sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
+    libappindicator-gtk3-devel librsvg2-devel
+
+  # Arch
+  sudo pacman -S webkit2gtk-4.1 base-devel curl wget file openssl \
+    appmenu-gtk-module librsvg libappindicator-gtk3
+  ```
 
 ## Getting Started
 
@@ -198,15 +222,35 @@ npm install
 # Run in dev mode (hot-reload frontend + Rust backend)
 npm run tauri dev
 
-# Or use the helper script
-.\dev.bat
-
 # Build production binary
 npm run tauri build
-
-# Or use the helper script
-.\build.bat
 ```
+
+### Platform-Specific Build Notes
+
+**Windows:**
+```powershell
+# Using the helper scripts
+.\dev.bat          # Dev mode
+.\build.bat        # Production build
+# Output: src-tauri/target/release/bundle/msi/*.msi
+```
+
+**macOS:**
+```bash
+npm run tauri build
+# Output: src-tauri/target/release/bundle/dmg/*.dmg
+#         src-tauri/target/release/bundle/macos/*.app
+```
+
+**Linux:**
+```bash
+npm run tauri build
+# Output: src-tauri/target/release/bundle/deb/*.deb
+#         src-tauri/target/release/bundle/appimage/*.AppImage
+```
+
+> **Cross-compilation:** Tauri does not support cross-compiling — you must build on the target platform. Use CI (e.g. GitHub Actions) with runners for each OS to produce all platform binaries.
 
 ## Key Tauri Commands
 
@@ -244,6 +288,27 @@ npm run tauri build
 | LogsPanel and MemoryGraphView use hard-coded colors (not theme-aware) | Open |
 
 ## Patch Notes
+
+### v0.7 — Single Instance & Port Separation (2026-04-20)
+
+**New Features**
+- **Single-instance enforcement** — Launching Proximus when it's already running focuses the existing window instead of spawning a duplicate (via `tauri-plugin-single-instance`)
+- **Dev/release port separation** — Debug builds use ports 4151/4152, release builds use 4141/4142, so both can run simultaneously without conflicts
+- **Custom titlebar** — Replaced the native OS title bar with an integrated custom titlebar featuring drag-to-move, minimize, maximize/restore, and close buttons — styled to match the app theme
+
+**Improvements**
+- **Hidden xterm cursor** — The blinking cursor is now hidden during Claude streaming output to prevent visual jumpiness (cursor layer set to `display: none`, cursor color transparent)
+
+### v0.6 — Cross-Platform Support (2026-04-20)
+
+**New Features**
+- **macOS and Linux support** — Process management, PTY spawning, and orphan cleanup now use platform-appropriate APIs (`lsof`/`kill` on Unix, `netstat`/`taskkill` on Windows)
+- **Conditional compilation** — Windows-specific APIs (`CommandExt`, `creation_flags`) are gated behind `#[cfg(windows)]` so the Rust backend compiles cleanly on all platforms
+
+**Changes**
+- PTY shell selection: `cmd` on Windows, `bash` on macOS/Linux
+- Screen clear command: `cls` on Windows, `clear` on macOS/Linux
+- `copilot-api` spawned via `cmd /c npx` on Windows, `npx` directly on Unix
 
 ### v0.5 — Built-in Proxy & Log Cleanup (2026-04-20)
 
