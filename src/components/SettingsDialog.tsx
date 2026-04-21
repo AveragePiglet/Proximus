@@ -19,6 +19,7 @@ interface AppSettings {
   project_primary_model: string;
   project_secondary_model: string;
   chat_model: string;
+  dangerously_skip_permissions: boolean;
 }
 
 const TIER_LABELS: Record<string, string> = {
@@ -175,6 +176,7 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
     project_primary_model: "",
     project_secondary_model: "",
     chat_model: "",
+    dangerously_skip_permissions: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -221,7 +223,7 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
   }: {
     label: string;
     description: string;
-    settingKey: keyof AppSettings;
+    settingKey: "project_primary_model" | "project_secondary_model" | "chat_model";
   }) => (
     <div className="settings-field">
       <label className="settings-field-label">{label}</label>
@@ -269,7 +271,34 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
           <section className="settings-section-block">
             <h4 className="settings-section-title">Terminal</h4>
             <div className="settings-section-divider" />
-            <p className="settings-section-empty">Terminal settings coming soon.</p>
+
+            <div className="settings-field">
+              <div className="settings-toggle-row">
+                <label className="settings-toggle-label">
+                  <span className="settings-field-label">Skip permission prompts</span>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings.dangerously_skip_permissions}
+                      onChange={(e) => {
+                        setSettings((prev) => ({ ...prev, dangerously_skip_permissions: e.target.checked }));
+                        setSaved(false);
+                      }}
+                    />
+                    <span className="settings-toggle-slider" />
+                  </label>
+                </label>
+              </div>
+              <div className="settings-warning">
+                <span className="settings-warning-icon">&#9888;</span>
+                <span>
+                  Launches Claude with <code>--dangerously-skip-permissions</code>.
+                  This allows Claude to execute commands, edit files, and access the
+                  internet <strong>without asking for confirmation</strong>. Only
+                  enable this if you fully understand the risks.
+                </span>
+              </div>
+            </div>
           </section>
 
           {/* ── Models ──────────────────────────────────── */}

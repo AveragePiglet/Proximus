@@ -16,6 +16,10 @@ pub struct AppSettings {
     /// Model used for chat (scratch) tabs
     #[serde(default = "default_chat_model")]
     pub chat_model: String,
+
+    /// When true, launch Claude with --dangerously-skip-permissions
+    #[serde(default)]
+    pub dangerously_skip_permissions: bool,
 }
 
 fn default_project_primary() -> String {
@@ -36,6 +40,7 @@ impl Default for AppSettings {
             project_primary_model: default_project_primary(),
             project_secondary_model: default_project_secondary(),
             chat_model: default_chat_model(),
+            dangerously_skip_permissions: false,
         }
     }
 }

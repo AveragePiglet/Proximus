@@ -166,11 +166,11 @@ fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> R
 
     // Spawn PTY for this tab — use project primary model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let (model, fallback_model) = {
+    let (model, fallback_model, dangerous_mode) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode)?;
 
     // Start memory watcher for this tab's memory dir
     if memory_dir.exists() {
@@ -218,11 +218,11 @@ fn create_scratch_tab(state: State<AppState>, app: AppHandle) -> Result<String, 
 
     // Spawn PTY with no memory — use chat model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let model = {
+    let (model, dangerous_mode) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        Some(s.chat_model.clone())
+        (Some(s.chat_model.clone()), s.dangerously_skip_permissions)
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None, dangerous_mode)?;
 
     let tab_info = TabInfo {
         id: tab_id.clone(),
@@ -347,11 +347,11 @@ fn reopen_tab(state: State<AppState>, app: AppHandle, tab_id: String) -> Result<
     // Re-spawn PTY — use project primary model from settings
     let memory_dir = PathBuf::from(&tab_state.project_path).join(".node-memory");
     let rewriter_port = state.processes.get_rewriter_port();
-    let (model, fallback_model) = {
+    let (model, fallback_model, dangerous_mode) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists(), model, fallback_model)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode)?;
 
     if memory_dir.exists() {
         memory::start_watcher_for_tab(app.clone(), memory_dir.clone(), tab_id.clone());
@@ -404,11 +404,11 @@ fn spawn_tab_pty(state: State<AppState>, app: AppHandle, tab_id: String) -> Resu
     }
     let rewriter_port = state.processes.get_rewriter_port();
     let has_memory = tab.memory_dir.exists();
-    let (model, fallback_model) = {
+    let (model, fallback_model, dangerous_mode) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory, model, fallback_model)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory, model, fallback_model, dangerous_mode)?;
     tab.pty = Some(pty_state);
     let now = chrono::Utc::now().to_rfc3339();
     tab.pty_started_at = Some(now.clone());
@@ -705,17 +705,37 @@ fn start_copilot_auth(state: State<AppState>, app: AppHandle) -> Result<(), Stri
     *state.pending_auth_pid.lock().map_err(|e| e.to_string())? = Some(child.id());
 
     let stdout = child.stdout.take().ok_or("No stdout")?;
-    let app_clone = app.clone();
+    let stderr = child.stderr.take().ok_or("No stderr")?;
+
+    // Read stdout
+    let app_stdout = app.clone();
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(line) = line {
-                eprintln!("[copilot-auth] {}", line);
-                let _ = app_clone.emit("copilot-auth-output", line);
+                eprintln!("[copilot-auth:stdout] {}", line);
+                let _ = app_stdout.emit("copilot-auth-output", line);
             }
         }
+    });
+
+    // Read stderr (device codes often appear here)
+    let app_stderr = app.clone();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                eprintln!("[copilot-auth:stderr] {}", line);
+                let _ = app_stderr.emit("copilot-auth-output", line);
+            }
+        }
+    });
+
+    // Wait for the child process in a separate thread
+    let app_wait = app.clone();
+    std::thread::spawn(move || {
         let success = child.wait().map(|s| s.success()).unwrap_or(false);
-        let _ = app_clone.emit("copilot-auth-done", success);
+        let _ = app_wait.emit("copilot-auth-done", success);
     });
 
     Ok(())
@@ -747,6 +767,125 @@ fn cancel_copilot_auth(state: State<AppState>) -> Result<(), String> {
 }
 
 // ── App setup ────────────────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct DependencyStatus {
+    claude_installed: bool,
+    copilot_api_installed: bool,
+}
+
+#[tauri::command]
+fn check_dependencies() -> DependencyStatus {
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let claude_installed = {
+        let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.args(["/c", "claude", "--version"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.args(["-c", "claude --version"]);
+        }
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+
+    let copilot_api_installed = {
+        // Use `npm list -g` instead of `npx --version` — npx is slow (downloads
+        // the package if not cached) and unreliable on Windows.  `npm list -g`
+        // returns exit-code 0 iff the package is globally installed, fast & offline.
+        let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.args(["/c", "npm", "list", "-g", "copilot-api", "--depth=0"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.args(["-c", "npm list -g copilot-api --depth=0"]);
+        }
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+
+    eprintln!(
+        "[deps] claude_installed={}, copilot_api_installed={}",
+        claude_installed, copilot_api_installed
+    );
+
+    DependencyStatus {
+        claude_installed,
+        copilot_api_installed,
+    }
+}
+
+#[tauri::command]
+async fn install_dependencies(install_claude: bool, install_copilot_api: bool) -> Result<String, String> {
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut results = Vec::new();
+
+    if install_claude {
+        let output = {
+            let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.args(["/c", "npm", "install", "-g", "@anthropic-ai/claude-code"]);
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            #[cfg(not(windows))]
+            {
+                cmd.args(["-c", "npm install -g @anthropic-ai/claude-code"]);
+            }
+            cmd.output().map_err(|e| format!("Failed to run npm install: {}", e))?
+        };
+        if output.status.success() {
+            results.push("Claude Code installed successfully".to_string());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to install Claude Code: {}", stderr));
+        }
+    }
+
+    if install_copilot_api {
+        let output = {
+            let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.args(["/c", "npm", "install", "-g", "copilot-api"]);
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            #[cfg(not(windows))]
+            {
+                cmd.args(["-c", "npm install -g copilot-api"]);
+            }
+            cmd.output().map_err(|e| format!("Failed to run npm install: {}", e))?
+        };
+        if output.status.success() {
+            results.push("Copilot API installed successfully".to_string());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to install Copilot API: {}", stderr));
+        }
+    }
+
+    Ok(results.join("; "))
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -860,6 +999,9 @@ pub fn run() {
             start_copilot_auth,
             cancel_copilot_auth,
             sign_out_copilot,
+            // Dependency checks
+            check_dependencies,
+            install_dependencies,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

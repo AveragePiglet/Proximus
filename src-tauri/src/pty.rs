@@ -17,7 +17,7 @@ struct PtyOutputEvent {
     data: String,
 }
 
-pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port: u16, has_memory: bool, model: Option<String>, fallback_model: Option<String>) -> Result<PtyState, String> {
+pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port: u16, has_memory: bool, model: Option<String>, fallback_model: Option<String>, dangerous_mode: bool) -> Result<PtyState, String> {
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -68,10 +68,11 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
                 .filter(|m| !m.is_empty() && Some(*m) != model.as_deref())
                 .map(|m| format!(" --fallback-model {}", m))
                 .unwrap_or_default();
+            let dangerous_flag = if dangerous_mode { " --dangerously-skip-permissions" } else { "" };
             if has_memory {
-                let _ = w.write_all(format!("{} && claude{}{} \"Load Memory\"\r\n", clear, model_flag, fallback_flag).as_bytes());
+                let _ = w.write_all(format!("{} && claude{}{}{} \"Load Memory\"\r\n", clear, model_flag, fallback_flag, dangerous_flag).as_bytes());
             } else {
-                let _ = w.write_all(format!("{} && claude{}{}\r\n", clear, model_flag, fallback_flag).as_bytes());
+                let _ = w.write_all(format!("{} && claude{}{}{}\r\n", clear, model_flag, fallback_flag, dangerous_flag).as_bytes());
             }
             let _ = w.flush();
             eprintln!("[workspace] PTY[{}]: launched claude (has_memory={}, model={:?}, fallback={:?})", tab_id_launch, has_memory, model, fallback_model);

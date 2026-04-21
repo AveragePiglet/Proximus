@@ -13,18 +13,30 @@ use tokio::sync::oneshot;
 /// Response body type: either a streamed upstream response or a local error body
 type RespBody = Either<Incoming, Full<Bytes>>;
 
-/// Rewrite model names to copilot-api expected IDs
-fn rewrite_model(name: &str) -> &str {
+/// Rewrite model names from Claude format (dashes) to Copilot format (dots)
+/// e.g. "claude-opus-4-6" → "claude-opus-4.6", "claude-sonnet-4-6" → "claude-sonnet-4.6"
+fn rewrite_model(name: &str) -> String {
     let lower = name.to_lowercase();
-    if lower.contains("opus") {
-        "claude-opus-4-7"
-    } else if lower.contains("haiku") {
-        "claude-haiku-4-5"
-    } else if lower.contains("sonnet") {
-        "claude-sonnet-4-6"
-    } else {
-        name
+    // Match patterns like claude-{family}-{major}-{minor}
+    let families = ["opus", "sonnet", "haiku"];
+    for family in families {
+        if let Some(pos) = lower.find(family) {
+            // Extract everything after the family name, e.g. "-4-6" from "claude-opus-4-6"
+            let after = &lower[pos + family.len()..];
+            if let Some(rest) = after.strip_prefix('-') {
+                // Convert "4-6" → "4.6" (replace only the last dash with a dot)
+                if let Some(dash_pos) = rest.rfind('-') {
+                    let version = format!("{}.{}", &rest[..dash_pos], &rest[dash_pos + 1..]);
+                    return format!("claude-{}-{}", family, version);
+                }
+                // Single version number like "4"
+                return format!("claude-{}-{}", family, rest);
+            }
+            // No version suffix, just return as-is with the family
+            return format!("claude-{}", family);
+        }
     }
+    name.to_string()
 }
 
 struct ProxyState {

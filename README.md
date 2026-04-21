@@ -291,6 +291,22 @@ npm run tauri build
 
 ## Patch Notes
 
+### v0.8.2 — Model Rewrite Fix + Auth & Dependency Checks (2026-04-21)
+
+**New Features**
+- **Dependency detection on startup** — Proximus now checks that `claude` (Claude Code CLI) and `copilot-api` are installed before launching the proxy chain. If either is missing, a dialog appears listing the missing packages with their install commands. Click **Install** to run `npm install -g` automatically, or **Skip** to proceed anyway.
+- New Tauri commands: `check_dependencies`, `install_dependencies`
+- New `DependencyDialog.tsx` component integrated into `Toolbar.tsx` startup flow
+
+**Fixes**
+- **Auth flow no longer stuck on "Starting auth flow..."** — `start_copilot_auth` was only reading stdout, but `copilot-api auth` outputs the device code to stderr. Now reads both streams in parallel, so the device code and GitHub URL always appear in the Settings dialog.
+- `child.wait()` moved to a dedicated thread so neither the stdout nor stderr reader blocks the other
+- **Model version mapping now preserves the actual version number** — Previously the rewrite proxy hardcoded model targets (e.g. all Opus variants → `claude-opus-4.7`), which sent the wrong model ID to Copilot's API resulting in `model_not_supported` errors. The proxy now dynamically converts Claude's dash format to Copilot's dot format: `claude-opus-4-6` → `claude-opus-4.6`, `claude-opus-4-7` → `claude-opus-4.7`, etc.
+- Fixed in both the built-in Rust proxy (`model_rewriter.rs`) and the standalone JS proxy (`model-rewrite-proxy.js`)
+- Future-proof: any new model versions will work automatically without code changes
+
+---
+
 ### v0.8.1 — GitHub Copilot Auth UI (2026-04-21)
 
 **New Features**

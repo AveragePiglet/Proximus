@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { StatusBadge } from "./StatusBadge";
 import { useProcessStatus } from "../hooks/useProcessStatus";
+import DependencyDialog from "./DependencyDialog";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,16 +25,61 @@ const waitForCopilotProxy = async (
   // Timeout — proceed anyway, model-rewriter will give a clear error if upstream isn't ready
 };
 
+interface DepStatus {
+  claude_installed: boolean;
+  copilot_api_installed: boolean;
+}
+
 export const Toolbar: React.FC = () => {
   const statuses = useProcessStatus();
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [depCheck, setDepCheck] = useState<DepStatus | null>(null);
   const hasAutoStarted = useRef(false);
+  // Resolve function stored so DependencyDialog can unblock startup
+  const depResolveRef = useRef<(() => void) | null>(null);
+
+  const checkAndInstallDeps = useCallback(async (): Promise<boolean> => {
+    setStatus("Checking dependencies...");
+    try {
+      const deps = await invoke<DepStatus>("check_dependencies");
+      if (deps.claude_installed && deps.copilot_api_installed) {
+        return true; // all good
+      }
+      // Show dialog and wait for resolution
+      setDepCheck(deps);
+      return new Promise<boolean>((resolve) => {
+        depResolveRef.current = () => resolve(true);
+      });
+    } catch {
+      return true; // if check itself fails, proceed anyway
+    }
+  }, []);
+
+  const handleDepResolved = useCallback(() => {
+    setDepCheck(null);
+    depResolveRef.current?.();
+    depResolveRef.current = null;
+  }, []);
+
+  const handleDepSkip = useCallback(() => {
+    setDepCheck(null);
+    depResolveRef.current?.();
+    depResolveRef.current = null;
+  }, []);
 
   const startProxyChain = async () => {
     setError(null);
     setStarting(true);
+
+    // Check dependencies first
+    const depsOk = await checkAndInstallDeps();
+    if (!depsOk) {
+      setStarting(false);
+      setStatus(null);
+      return;
+    }
 
     let proxyPort: number;
     try {
@@ -96,23 +142,33 @@ export const Toolbar: React.FC = () => {
   }, []);
 
   return (
-    <div className="toolbar">
-      <div className="toolbar-statuses">
-        {statuses.map((s) => (
-          <StatusBadge key={s.name} {...s} />
-        ))}
+    <>
+      <div className="toolbar">
+        <div className="toolbar-statuses">
+          {statuses.map((s) => (
+            <StatusBadge key={s.name} {...s} />
+          ))}
+        </div>
+        {status && <div className="toolbar-status">{status}</div>}
+        {error && <div className="toolbar-error">{error}</div>}
+        <div className="toolbar-actions">
+          <button
+            className="btn btn-start"
+            onClick={handleRestart}
+            disabled={starting}
+          >
+            {starting ? "Starting..." : "Restart"}
+          </button>
+        </div>
       </div>
-      {status && <div className="toolbar-status">{status}</div>}
-      {error && <div className="toolbar-error">{error}</div>}
-      <div className="toolbar-actions">
-        <button
-          className="btn btn-start"
-          onClick={handleRestart}
-          disabled={starting}
-        >
-          {starting ? "Starting..." : "Restart"}
-        </button>
-      </div>
-    </div>
+      {depCheck && (
+        <DependencyDialog
+          claudeMissing={!depCheck.claude_installed}
+          copilotApiMissing={!depCheck.copilot_api_installed}
+          onResolved={handleDepResolved}
+          onSkip={handleDepSkip}
+        />
+      )}
+    </>
   );
 };

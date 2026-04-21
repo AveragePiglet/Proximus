@@ -59,10 +59,25 @@ without pausing between them. After the core stages complete, offer the **Option
 
 **Stage 1 — Plan**
 Invoke the `structured-autonomy-plan` skill. Pass the feature description and
-confirmed feature name. This agent will:
+confirmed feature name. **Before handing off, explicitly instruct the Planner:**
+
+> Break the plan into the smallest reasonable independent steps. Each step must:
+> - Be a single atomic unit of work (one concern, one file area, or one behaviour)
+> - Be completable and testable on its own before the next step starts
+> - End with a `STOP & COMMIT` checkpoint
+>
+> ⊥ one giant step that covers the whole feature.
+> ⊤ 3–8 focused steps, each narrow enough to review in one sitting.
+
+This agent will:
 - Research the codebase
-- Produce `plans/{feature-name}/plan.md`
+- Break the feature into discrete, ordered steps (not one monolithic block)
+- Produce `plans/{feature-name}/plan.md` with one section per step
 - Ask clarifying questions if needed (let it — do not skip this)
+
+When plan is approved and saved, **review the plan yourself**: if it has fewer than 2
+steps for any non-trivial feature, ask the Planner to decompose further before
+proceeding.
 
 When plan is approved and saved, proceed immediately.
 
@@ -127,6 +142,7 @@ from there. Use the same automatic chaining as the New Feature Flow.
    > 🤖 Handing off to **[Agent Name]**...
 5. **If a stage fails or the agent asks a question**, surface it to the user and wait for resolution before continuing.
 6. **Do not combine stages** — each skill runs fully to completion before the next begins.
+7. **Plans must be decomposed into steps.** A valid plan has 3–8 narrow, independently testable steps each ending with `STOP & COMMIT`. If the Planner produces a single large step or fewer than 2 steps for a non-trivial feature, instruct it to decompose further before generating.
 7. **The `plans/` folder is the source of truth** — always reference it for handoffs between agents.
 
 ---
