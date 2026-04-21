@@ -721,6 +721,15 @@ html, body, #root {
   background: var(--accent-cyan)22;
 }
 
+.btn-settings {
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+}
+
+.btn-settings:hover {
+  background: var(--accent-purple)22;
+}
+
 .projects-error {
   background: var(--accent-red)22;
   border: 1px solid var(--accent-red)44;
@@ -1143,7 +1152,331 @@ html, body, #root {
   padding: 8px 12px;
 }
 
-/* Settings Panel */
+/* Settings Dialog */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-secondary) 95%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.settings-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 620px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.settings-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 28px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-dialog-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-close-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.settings-dialog-body {
+  padding: 20px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  /* Custom scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.settings-dialog-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-dialog-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-dialog-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.settings-dialog-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+.settings-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 14px 28px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+
+.settings-section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.settings-section-divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.settings-section-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+/* Settings dialog — model fields */
+.settings-model-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-field-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-purple);
+  margin-bottom: -4px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settings-field-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 2px;
+}
+
+.settings-select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 6px 10px;
+  cursor: pointer;
+  width: 100%;
+  appearance: auto;
+  transition: border-color 0.15s;
+}
+
+.settings-select:hover {
+  border-color: var(--accent-purple);
+}
+
+.settings-select:focus {
+  outline: none;
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 2px var(--accent-purple)33;
+}
+
+.settings-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-select optgroup {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
+.settings-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.btn-saved {
+  border-color: var(--accent-green) !important;
+  color: var(--accent-green) !important;
+}
+
+/* Settings dialog — Account section */
+.settings-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-account-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-account-badge {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-account-badge.authed {
+  color: var(--accent-green);
+}
+
+.settings-account-badge.unauthed {
+  color: var(--text-secondary);
+}
+
+.settings-account-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-account-action {
+  flex-shrink: 0;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.btn-account-action:hover {
+  border-color: var(--accent-purple);
+  background: var(--bg-hover);
+}
+
+.btn-account-danger {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+.btn-account-danger:hover {
+  border-color: var(--accent-red);
+  background: var(--accent-red)22;
+}
+
+.settings-auth-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.settings-auth-instruction {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-device-code {
+  font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent-purple);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 16px;
+}
+
+.settings-auth-waiting {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.settings-auth-success {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
+.settings-auth-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-red, #f87171);
+  font-weight: 500;
+}
+
+/* Settings Panel (sidebar) */
 .settings-section {
   margin-top: 16px;
 }
@@ -1206,4 +1539,27 @@ html, body, #root {
   font-size: 11px;
   color: var(--text-primary);
   white-space: nowrap;
+}
+
+/* ── Toast notification ─────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-green);
+  color: var(--accent-green);
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 9999;
+  pointer-events: none;
+  animation: toast-in 0.2s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }

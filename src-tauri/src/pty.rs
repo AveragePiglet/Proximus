@@ -17,7 +17,7 @@ struct PtyOutputEvent {
     data: String,
 }
 
-pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port: u16, has_memory: bool) -> Result<PtyState, String> {
+pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port: u16, has_memory: bool, model: Option<String>, fallback_model: Option<String>) -> Result<PtyState, String> {
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -57,13 +57,24 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
         std::thread::sleep(std::time::Duration::from_millis(800));
         if let Ok(mut w) = writer_clone.lock() {
             let clear = if cfg!(windows) { "cls" } else { "clear" };
+            // Build model flag if specified
+            let model_flag = model
+                .as_deref()
+                .filter(|m| !m.is_empty())
+                .map(|m| format!(" --model {}", m))
+                .unwrap_or_default();
+            let fallback_flag = fallback_model
+                .as_deref()
+                .filter(|m| !m.is_empty() && Some(*m) != model.as_deref())
+                .map(|m| format!(" --fallback-model {}", m))
+                .unwrap_or_default();
             if has_memory {
-                let _ = w.write_all(format!("{} && claude \"Load Memory\"\r\n", clear).as_bytes());
+                let _ = w.write_all(format!("{} && claude{}{} \"Load Memory\"\r\n", clear, model_flag, fallback_flag).as_bytes());
             } else {
-                let _ = w.write_all(format!("{} && claude\r\n", clear).as_bytes());
+                let _ = w.write_all(format!("{} && claude{}{}\r\n", clear, model_flag, fallback_flag).as_bytes());
             }
             let _ = w.flush();
-            eprintln!("[workspace] PTY[{}]: launched claude (has_memory={})", tab_id_launch, has_memory);
+            eprintln!("[workspace] PTY[{}]: launched claude (has_memory={}, model={:?}, fallback={:?})", tab_id_launch, has_memory, model, fallback_model);
         }
     });
 

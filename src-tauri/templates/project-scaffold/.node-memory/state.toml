@@ -1,0 +1,9 @@
+active_task = ""
+active_plan = ""   # set to "plans/<name>.toml" when a plan is in progress
+branch = "main"
+touched = []
+next_action = ""
+
+[context]
+why = ""
+refs = []

@@ -21,35 +21,38 @@ export default function MigrationDialog({
     setMigrating(true);
     setStatus("Reading existing memory files...");
     try {
-      // 1. Scaffold the fresh .claude-memory structure
+      // 1. Scaffold the fresh .node-memory structure
       await invoke("scaffold_project_cmd", { projectPath });
 
-      // 2. Update CLAUDE.md to reference new memory system
+      // 2. Ensure all expected dirs/files are present (catches template additions)
+      await invoke("sync_memory_structure", { projectPath });
+
+      // 3. Update CLAUDE.md to reference new memory system
       await invoke("update_claude_md_references", { projectPath });
 
-      // 3. Read contents of detected files
+      // 4. Read contents of detected files
       const contents = await invoke<[string, string][]>(
         "get_migration_file_contents",
         { projectPath, files: detectedFiles }
       );
 
-      // 4. Build migration prompt and write it to the PTY
+      // 5. Build migration prompt and write it to the PTY
       const filesSummary = contents
         .map(([path, content]) => `--- ${path} ---\n${content}`)
         .join("\n\n");
 
-      const migrationPrompt = `I've just scaffolded a fresh .claude-memory/ system for this project and updated the CLAUDE.md to reference the new memory system. The project had existing memory/context files that need to be migrated into the new TOML-based graph memory system.
+      const migrationPrompt = `I've just scaffolded a fresh .node-memory/ system for this project and updated the CLAUDE.md to reference the new memory system. The project had existing memory/context files that need to be migrated into the new TOML-based graph memory system.
 
 Please do the following:
 1. Read the existing memory files below
-2. Migrate their content into .claude-memory/ (graph.toml nodes/edges, invariants.toml rules, nodes/*.toml for detailed info)
-3. Review the CLAUDE.md file — ensure it references .claude-memory/ correctly and remove any remaining references to the old memory system (memory/, .cursorrules, etc.)
+2. Migrate their content into .node-memory/ (graph.toml nodes/edges, invariants.toml rules, nodes/*.toml for detailed info)
+3. Review the CLAUDE.md file — ensure it references .node-memory/ correctly and remove any remaining references to the old memory system (memory/, .cursorrules, etc.)
 4. Follow the memory protocol defined in CLAUDE.md
 
 Existing memory files:
 ${filesSummary}
 
-Migrate this into the .claude-memory/ system now.`;
+Migrate this into the .node-memory/ system now.`;
 
       await invoke("write_pty", { tabId, data: migrationPrompt });
       // Wait for Claude Code to fully process the bracketed paste before sending Enter
@@ -67,6 +70,8 @@ Migrate this into the .claude-memory/ system now.`;
   const handleFresh = async () => {
     try {
       await invoke("scaffold_project_cmd", { projectPath });
+      // Ensure all expected dirs/files exist (catches template additions)
+      await invoke("sync_memory_structure", { projectPath });
       onComplete();
     } catch (e) {
       setStatus(`Error: ${e}`);
@@ -83,7 +88,7 @@ Migrate this into the .claude-memory/ system now.`;
         <h3>Existing project memory detected</h3>
         <p className="migration-subtitle">
           This project has AI memory/context files that can be migrated to the
-          structured .claude-memory system.
+          structured .node-memory system.
         </p>
         <div className="migration-files">
           {detectedFiles.map((f) => (

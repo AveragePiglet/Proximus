@@ -58,7 +58,7 @@ Proximus Workspace is a native desktop application that turns Claude Code into a
 - **Model rewrite proxy** — Transparently routes Claude through GitHub Copilot's API, rewriting model names on the fly
 - **Live memory graph** — Visualize your project's knowledge graph in real-time with Cytoscape, click into nodes for detail
 - **Project scaffolding** — Spin up new projects pre-loaded with memory systems, skills, and conventions
-- **Memory migration** — Detects existing AI memory files (Cursor rules, AGENTS.md, CLAUDE.md, ADRs, etc.) and offers to migrate them into the structured .claude-memory system
+- **Memory migration** — Detects existing AI memory files (Cursor rules, AGENTS.md, CLAUDE.md, ADRs, etc.) and offers to migrate them into the structured .node-memory system
 - **Context tracking** — Statusline integration shows context window usage per session
 - **Structured logging** — Captures backend events in a sidebar panel with auto-scrolling
 - **Theme system** — 14 built-in themes (10 dark, 4 light) with live terminal recoloring and localStorage persistence
@@ -76,7 +76,7 @@ This means **zero Anthropic API costs**. You use Claude Code exactly as normal, 
 
 ## How the Memory System Works
 
-Every project scaffolded by Proximus gets a `.claude-memory/` directory — a graph-based knowledge store in plain TOML:
+Every project scaffolded by Proximus gets a `.node-memory/` directory — a graph-based knowledge store in plain TOML:
 
 - **graph.toml** — Nodes (modules, plans, bugs) and edges (relationships between them), each with L0/L1/L2 summaries at increasing detail
 - **state.toml** — Current task, branch, known issues — what Claude picks up when it starts a new session
@@ -150,6 +150,7 @@ The sidebar's **Memory Graph** view renders this live with Cytoscape — you can
 │   │   ├── NodeDetail.tsx      # Graph node inspector panel
 │   │   ├── ProjectsView.tsx    # Project launcher / scaffolding UI
 │   │   ├── MigrationDialog.tsx # Memory migration popup (detect & convert existing AI memory)
+│   │   ├── SettingsDialog.tsx  # Modal settings dialog (theme picker + future settings)
 │   │   ├── LogsPanel.tsx       # Timestamped log viewer
 │   │   ├── QuickActions.tsx    # One-click Claude Code commands
 │   │   ├── SettingsPanel.tsx   # Theme picker sidebar tab
@@ -259,7 +260,7 @@ npm run tauri build
 | `spawn_pty` | Start a new Claude Code terminal session |
 | `write_pty` / `resize_pty` | Terminal I/O and resize |
 | `start_processes` / `stop_processes` | Manage proxy chain lifecycle |
-| `get_memory_graph` / `get_memory_state` | Read `.claude-memory/` TOML files |
+| `get_memory_graph` / `get_memory_state` | Read `.node-memory/` TOML files |
 | `scaffold_project` | Extract project template to a new directory |
 | `get_log_entries` | Retrieve structured log buffer |
 | `get_statusline_stats` | Context window usage from statusline |
@@ -286,8 +287,63 @@ npm run tauri build
 | Status badge doesn't reflect actual PTY state | Open |
 | Small black bar between terminal and quick actions (xterm row snapping) | Won't fix |
 | LogsPanel and MemoryGraphView use hard-coded colors (not theme-aware) | Open |
+| Auto-migration `Enter` delay uses fixed 2s sleep — may be unreliable on slow machines | Open |
 
 ## Patch Notes
+
+### v0.8.1 — GitHub Copilot Auth UI (2026-04-21)
+
+**New Features**
+- **Account section in Settings** — The Settings dialog now has an Account section at the top showing your GitHub Copilot connection status (● Connected / ○ Not connected) with Sign In, Re-authenticate, and Sign Out buttons.
+- **Device flow UI** — Clicking Sign In launches `npx copilot-api auth`, streams stdout to the UI, and automatically opens the GitHub device authorisation page in your browser. The device code is displayed in the settings panel with an "Open GitHub ↗" button as a fallback.
+- **Proxy restart auto-auth** — If the proxy restarts while you're signed out (e.g. after clicking the Restart button), the Settings dialog opens automatically and the browser tab pops up — no manual navigation required.
+- **Sign out** — Deletes the Copilot token from all known candidate paths and stops the running proxy so the cached session is invalidated immediately.
+
+**Fixes**
+- Token path detection now checks four candidate locations in priority order, with `~/.local/share/copilot-api/github_token` (the XDG path used by current copilot-api versions) first — previously the app was always checking the wrong path and showing "Not connected" even when authenticated.
+- Auth status check now requires the token file to have `>10` chars of content, preventing a false "Connected" badge when copilot-api creates an empty placeholder during the device flow handshake.
+- Closing and reopening the Settings dialog no longer shows a stale "Connected" state from a previous incomplete auth — the pending auth process is cancelled on dialog unmount.
+- Fixed repeated Sign In clicks opening multiple browser tabs — there is now exactly one `openUrl` call site (in `App.tsx`) guarded by a ref, regardless of how many event listeners are active.
+
+**Backend**
+- `AppState` gains `pending_auth_pid: Mutex<Option<u32>>` — stores the PID of the running auth process so `cancel_copilot_auth` can kill it by PID (via `taskkill /T /F` on Windows)
+- New Tauri commands: `get_copilot_auth_status`, `start_copilot_auth`, `cancel_copilot_auth`, `sign_out_copilot`
+- `copilot_token_candidates()` checks `~/.local/share`, `%LOCALAPPDATA%`, `~/.copilot-api`, and `%APPDATA%`
+
+**Frontend**
+- `SettingsDialog` lifted from `ProjectsView` into `App.tsx` — single `showSettings` state shared across the whole app
+- `App.tsx` installs a permanent `copilot-auth-output` event listener that stays active even when Settings is closed; buffers `pendingAuthCode`/`pendingAuthUrl` and passes them as props to `SettingsDialog` so the device code is pre-populated on mount
+- `AccountSection` cancels any pending auth process on unmount via `cancel_copilot_auth`
+
+---
+
+### v0.8 — Memory Rename & Auto-Migration (2026-04-21)
+
+**Breaking Changes**
+- **`.claude-memory/` renamed to `.node-memory/`** — All backend paths, scaffold templates, frontend references, and the project CLAUDE.md protocol now use `.node-memory/`. Existing projects with `.claude-memory/` are migrated automatically.
+
+**New Features**
+- **Auto-migration on tab open** — When a project with a legacy `.claude-memory/` folder is opened, Proximus atomically renames it to `.node-memory/` (with a copy-then-delete fallback for cross-device moves) and updates CLAUDE.md references. No user action required.
+- **Memory structure sync** — On every tab open, Proximus diffs the project's `.node-memory/` against the current template and silently creates anything missing — new subdirs (`plans/`, `cold/`, `tools/`, `prompts/`) and files (`validate.py`, bootstrap/migrate prompts). A toast lists what was added.
+- **`plans/` folder** — All implementation plans now live in `.node-memory/plans/` instead of the project root. CLAUDE.md protocol updated with a Plans section and `active_plan` field in `state.toml`.
+- **`prompts/` folder** — Scaffold template now ships `bootstrap.md`, `bootstrap-repo.md`, `claude-md-protocol.md`, and `migrate.md` as ready-to-paste Claude Code prompts for every new project.
+- **Settings Dialog** — A new modal settings dialog is accessible via the purple ⚙ Settings button in the Projects view. Houses the theme picker and provides a home for future settings sections.
+- **Single-instance guard is release-only** — In debug builds the single-instance mutex no longer fires, preventing the dev window from being killed when a production instance is already running.
+
+**Backend**
+- `create_tab` now returns `CreateTabResult { tab_id, memory_migrated, dirs_added }` instead of a plain `String`
+- New `scaffold::migrate_legacy_memory()` — atomic rename with `copy_dir_all` fallback; also runs `update_claude_md_references()` after rename
+- New `scaffold::ensure_memory_structure()` — diffs project `.node-memory/` against template, creates missing dirs/files, returns list of additions
+- New `sync_memory_structure` Tauri command — exposes structure sync to the frontend directly
+- `update_claude_md_references()` now covers `.claude-memory/` → `.node-memory/` as an explicit replacement pair
+
+**Frontend**
+- `useTabStore` reads `memory_migrated` and `dirs_added` from `create_tab` result and fires toasts for each
+- `ProjectsView` renders `SettingsDialog` as a modal on ⚙ button click
+- `MigrationDialog` calls `sync_memory_structure` after scaffolding in both Migrate and Start Fresh flows, ensuring new template additions are always present
+- `MigrationDialog` prompts now reference `.node-memory/` throughout
+
+---
 
 ### v0.7 — Single Instance & Port Separation (2026-04-20)
 
@@ -333,11 +389,11 @@ npm run tauri build
 ### v0.3 — Memory Migration (2026-04-19)
 
 **New Features**
-- **Memory Migration Dialog** — When adding a project with existing AI memory/context files (`.cursorrules`, `CLAUDE.md`, `AGENTS.md`, `.ai/`, ADRs, etc.) but no `.claude-memory/`, a dialog offers three choices:
-  - **Migrate** — Scaffolds `.claude-memory/` and sends existing file contents to Claude for LLM-driven conversion into the structured TOML graph
-  - **Start Fresh** — Scaffolds a blank `.claude-memory/` ignoring existing files
+- **Memory Migration Dialog** — When adding a project with existing AI memory/context files (`.cursorrules`, `CLAUDE.md`, `AGENTS.md`, `.ai/`, ADRs, etc.) but no `.node-memory/`, a dialog offers three choices:
+  - **Migrate** — Scaffolds `.node-memory/` and sends existing file contents to Claude for LLM-driven conversion into the structured TOML graph
+  - **Start Fresh** — Scaffolds a blank `.node-memory/` ignoring existing files
   - **Skip** — No memory system created
-- Detection is smart: only triggers on files with >10 lines (ignores empty stubs) and skips projects that already have `.claude-memory/` or have no AI memory at all
+- Detection is smart: only triggers on files with >10 lines (ignores empty stubs) and skips projects that already have `.node-memory/` or have no AI memory at all
 
 **Backend**
 - New Tauri commands: `detect_project_memory`, `scaffold_project_cmd`, `get_migration_file_contents`

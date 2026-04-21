@@ -17,11 +17,11 @@ type RespBody = Either<Incoming, Full<Bytes>>;
 fn rewrite_model(name: &str) -> &str {
     let lower = name.to_lowercase();
     if lower.contains("opus") {
-        "claude-opus-4.6"
+        "claude-opus-4-7"
     } else if lower.contains("haiku") {
-        "claude-haiku-4.5"
+        "claude-haiku-4-5"
     } else if lower.contains("sonnet") {
-        "claude-sonnet-4.6"
+        "claude-sonnet-4-6"
     } else {
         name
     }

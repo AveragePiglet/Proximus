@@ -18,11 +18,23 @@ export interface MigrationPending {
   files: string[];
 }
 
+interface CreateTabResult {
+  tab_id: string;
+  memory_migrated: boolean;
+  dirs_added: string[];
+}
+
 export function useTabStore() {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [migrationPending, setMigrationPending] = useState<MigrationPending | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string, durationMs = 4000) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), durationMs);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -48,10 +60,20 @@ export function useTabStore() {
     }
     setLoading(true);
     try {
-      const tabId = await invoke<string>("create_tab", { projectPath: path });
+      const result = await invoke<CreateTabResult>("create_tab", { projectPath: path });
+      const tabId = result.tab_id;
+
+      if (result.memory_migrated) {
+        showToast("📁 Memory folder migrated to .node-memory");
+      }
+
+      if (result.dirs_added.length > 0) {
+        showToast(`🗂 Memory structure updated: ${result.dirs_added.join(", ")}`);
+      }
+
       await refresh();
 
-      // Check if migration is needed (backend skips scaffold when existing memory found)
+      // Check if migration dialog is needed (backend skips scaffold when existing memory found)
       const detected = await invoke<string[]>("detect_project_memory", { projectPath: path });
       if (detected.length > 0) {
         setMigrationPending({ tabId, projectPath: path, files: detected });
@@ -63,7 +85,7 @@ export function useTabStore() {
       setLoading(false);
       throw e;
     }
-  }, [refresh]);
+  }, [refresh, showToast]);
 
   const closeTab = useCallback(async (tabId: string) => {
     // Switch to this tab first, then close (backend closes active tab)
@@ -115,6 +137,7 @@ export function useTabStore() {
     loading,
     migrationPending,
     dismissMigration: () => setMigrationPending(null),
+    toast,
     createTab,
     createScratchTab,
     closeTab,

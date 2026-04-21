@@ -1,3 +1,4 @@
+mod app_settings;
 mod logging;
 mod memory;
 mod model_rewriter;
@@ -6,6 +7,7 @@ mod pty;
 mod scaffold;
 mod tab_store;
 
+use app_settings::AppSettings;
 use logging::{LogBuffer, LogEntry};
 use memory::{MemoryGraph, MemoryState};
 use process_manager::{ManagedProcesses, ProcessStatus};
@@ -13,7 +15,7 @@ use pty::PtyState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct TabInfo {
     id: String,
@@ -34,6 +36,13 @@ struct TabStatus {
     tokens_total: Option<u64>,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct CreateTabResult {
+    tab_id: String,
+    memory_migrated: bool,
+    dirs_added: Vec<String>,
+}
+
 struct AppState {
     processes: ManagedProcesses,
     logs: LogBuffer,
@@ -41,6 +50,9 @@ struct AppState {
     active_tab: Mutex<Option<String>>,
     app_data_dir: PathBuf,
     tab_store: Mutex<tab_store::TabStore>,
+    settings: Mutex<AppSettings>,
+    /// PID of a running `npx copilot-api auth` process, so it can be cancelled
+    pending_auth_pid: Mutex<Option<u32>>,
 }
 
 // ── Proxy commands (shared, unchanged) ───────────────────────────
@@ -81,6 +93,11 @@ fn scaffold_project_cmd(project_path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn sync_memory_structure(project_path: String) -> Result<Vec<String>, String> {
+    scaffold::ensure_memory_structure(&project_path)
+}
+
+#[tauri::command]
 fn update_claude_md_references(project_path: String) -> Result<bool, String> {
     scaffold::update_claude_md_references(&project_path)
 }
@@ -115,10 +132,17 @@ fn get_migration_file_contents(project_path: String, files: Vec<String>) -> Resu
 }
 
 #[tauri::command]
-fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> Result<String, String> {
+fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> Result<CreateTabResult, String> {
+    // Auto-migrate legacy .claude-memory → .node-memory if present
+    let migrated = scaffold::migrate_legacy_memory(&project_path)?;
+    if migrated {
+        logging::emit_log(&app, &state.logs, "app", "info",
+            &format!("Migrated .claude-memory → .node-memory for {}", project_path));
+    }
+
     // Only scaffold if no existing memory detected (migration handled separately by frontend)
-    let memory_dir_path = PathBuf::from(&project_path).join(".claude-memory");
-    if !memory_dir_path.exists() {
+    let memory_dir = PathBuf::from(&project_path).join(".node-memory");
+    if !memory_dir.exists() {
         let existing = scaffold::detect_existing_memory(&project_path)?;
         if existing.is_empty() {
             // Fresh project — scaffold immediately
@@ -127,15 +151,26 @@ fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> R
         // else: has existing memory — frontend will handle migration dialog
     }
 
+    // Sync structure: add any dirs/files missing from an already-existing .node-memory/
+    let dirs_added = scaffold::ensure_memory_structure(&project_path)?;
+    if !dirs_added.is_empty() {
+        logging::emit_log(&app, &state.logs, "app", "info",
+            &format!("Memory structure synced — added: {}", dirs_added.join(", ")));
+    }
+
     let tab_id = uuid::Uuid::new_v4().to_string();
-    let memory_dir = PathBuf::from(&project_path).join(".claude-memory");
+    let memory_dir = PathBuf::from(&project_path).join(".node-memory");
 
     eprintln!("[workspace] Creating tab {} for {:?}", tab_id, project_path);
     logging::emit_log(&app, &state.logs, "app", "info", &format!("Creating tab for {}", project_path));
 
-    // Spawn PTY for this tab
+    // Spawn PTY for this tab — use project primary model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists())?;
+    let (model, fallback_model) = {
+        let s = state.settings.lock().map_err(|e| e.to_string())?;
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+    };
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model)?;
 
     // Start memory watcher for this tab's memory dir
     if memory_dir.exists() {
@@ -166,7 +201,7 @@ fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> R
     tab_store::update_tab_stats(&mut store, &tab_id, Some(now.clone()), None);
     tab_store::save_tabs(&state.app_data_dir, &store);
 
-    Ok(tab_id)
+    Ok(CreateTabResult { tab_id, memory_migrated: migrated, dirs_added })
 }
 
 #[tauri::command]
@@ -181,14 +216,18 @@ fn create_scratch_tab(state: State<AppState>, app: AppHandle) -> Result<String, 
     eprintln!("[workspace] Creating scratch tab {} at {:?}", tab_id, project_path);
     logging::emit_log(&app, &state.logs, "app", "info", &format!("Creating scratch tab"));
 
-    // Spawn PTY with no memory
+    // Spawn PTY with no memory — use chat model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false)?;
+    let model = {
+        let s = state.settings.lock().map_err(|e| e.to_string())?;
+        Some(s.chat_model.clone())
+    };
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None)?;
 
     let tab_info = TabInfo {
         id: tab_id.clone(),
         project_dir: project_path.clone(),
-        memory_dir: temp_dir.join(".claude-memory"), // won't exist
+        memory_dir: temp_dir.join(".node-memory"), // won't exist
         pty: Some(pty_state),
         pty_started_at: Some(chrono::Utc::now().to_rfc3339()),
         last_memory_save: None,
@@ -305,10 +344,14 @@ fn reopen_tab(state: State<AppState>, app: AppHandle, tab_id: String) -> Result<
     tab_store::save_tabs(&state.app_data_dir, &store);
     drop(store);
 
-    // Re-spawn PTY
-    let memory_dir = PathBuf::from(&tab_state.project_path).join(".claude-memory");
+    // Re-spawn PTY — use project primary model from settings
+    let memory_dir = PathBuf::from(&tab_state.project_path).join(".node-memory");
     let rewriter_port = state.processes.get_rewriter_port();
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists())?;
+    let (model, fallback_model) = {
+        let s = state.settings.lock().map_err(|e| e.to_string())?;
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+    };
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists(), model, fallback_model)?;
 
     if memory_dir.exists() {
         memory::start_watcher_for_tab(app.clone(), memory_dir.clone(), tab_id.clone());
@@ -361,7 +404,11 @@ fn spawn_tab_pty(state: State<AppState>, app: AppHandle, tab_id: String) -> Resu
     }
     let rewriter_port = state.processes.get_rewriter_port();
     let has_memory = tab.memory_dir.exists();
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory)?;
+    let (model, fallback_model) = {
+        let s = state.settings.lock().map_err(|e| e.to_string())?;
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()))
+    };
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory, model, fallback_model)?;
     tab.pty = Some(pty_state);
     let now = chrono::Utc::now().to_rfc3339();
     tab.pty_started_at = Some(now.clone());
@@ -533,21 +580,194 @@ fn get_log_history(state: State<AppState>) -> Vec<LogEntry> {
     state.logs.get_all()
 }
 
+#[tauri::command]
+fn get_app_settings(state: State<AppState>) -> Result<AppSettings, String> {
+    let settings = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(settings.clone())
+}
+
+#[tauri::command]
+fn save_app_settings(state: State<AppState>, settings: AppSettings) -> Result<(), String> {
+    let mut current = state.settings.lock().map_err(|e| e.to_string())?;
+    *current = settings.clone();
+    app_settings::save_settings(&state.app_data_dir, &settings);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_available_models() -> Vec<app_settings::ModelEntry> {
+    app_settings::get_available_models()
+}
+
+/// All candidate paths where copilot-api may store the GitHub token.
+/// Different versions of copilot-api use different locations.
+fn copilot_token_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+
+    // Variant 1: ~/.local/share/copilot-api/github_token  (XDG data dir — used by current versions on all platforms)
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local").join("share").join("copilot-api").join("github_token"));
+    }
+
+    // Variant 2: %LOCALAPPDATA%/copilot-api/github_token  (older Windows versions)
+    if let Some(local) = dirs::data_local_dir() {
+        candidates.push(local.join("copilot-api").join("github_token"));
+    }
+
+    // Variant 3: ~/.copilot-api/github_token  (some older versions)
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".copilot-api").join("github_token"));
+    }
+
+    // Variant 4: %APPDATA%/copilot-api/github_token  (roaming profile)
+    if let Some(config) = dirs::config_dir() {
+        candidates.push(config.join("copilot-api").join("github_token"));
+    }
+
+    candidates
+}
+
+#[tauri::command]
+fn get_copilot_auth_status() -> bool {
+    let found = copilot_token_candidates().iter().any(|p| {
+        if !p.exists() { return false; }
+        // A valid token file must have meaningful content — not empty or whitespace only
+        match std::fs::read_to_string(p) {
+            Ok(content) => content.trim().len() > 10,
+            Err(_) => false,
+        }
+    });
+    eprintln!(
+        "[copilot-auth] token check: {} (searched: {:?})",
+        found,
+        copilot_token_candidates()
+    );
+    found
+}
+
+#[tauri::command]
+fn sign_out_copilot(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    let mut removed = false;
+    for path in copilot_token_candidates() {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove token at {:?}: {}", path, e))?;
+            eprintln!("[copilot-auth] Removed token at {:?}", path);
+            removed = true;
+        }
+    }
+    if !removed {
+        eprintln!("[copilot-auth] sign_out: no token file found");
+    }
+
+    // Kill the proxy and rewriter so they don't keep serving with the cached token
+    logging::emit_log(&app, &state.logs, "app", "info", "Signed out — stopping Copilot proxy");
+    state.processes.stop_all();
+
+    Ok(())
+}
+
+#[tauri::command]
+fn start_copilot_auth(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    use std::io::BufRead;
+    use std::process::{Command, Stdio};
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // Kill any already-running auth process first
+    cancel_copilot_auth(state.clone())?;
+
+    let mut cmd = {
+        #[cfg(windows)]
+        {
+            let mut c = Command::new("cmd");
+            c.args(["/c", "npx", "copilot-api", "auth"]);
+            c.creation_flags(CREATE_NO_WINDOW);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let mut c = Command::new("npx");
+            c.args(["copilot-api", "auth"]);
+            c
+        }
+    };
+
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start copilot auth: {}", e))?;
+
+    // Store PID so cancel_copilot_auth can kill it later
+    *state.pending_auth_pid.lock().map_err(|e| e.to_string())? = Some(child.id());
+
+    let stdout = child.stdout.take().ok_or("No stdout")?;
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                eprintln!("[copilot-auth] {}", line);
+                let _ = app_clone.emit("copilot-auth-output", line);
+            }
+        }
+        let success = child.wait().map(|s| s.success()).unwrap_or(false);
+        let _ = app_clone.emit("copilot-auth-done", success);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_copilot_auth(state: State<AppState>) -> Result<(), String> {
+    if let Ok(mut pid_guard) = state.pending_auth_pid.lock() {
+        if let Some(pid) = pid_guard.take() {
+            eprintln!("[copilot-auth] Cancelling auth process PID {}", pid);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── App setup ────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Focus the existing window when a second instance is launched
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }))
+        .plugin(tauri_plugin_dialog::init());
+
+    // Single-instance guard is release-only.
+    // In debug builds the app identifier is shared with any installed production
+    // build, so the single-instance mutex would cause the dev window to exit
+    // immediately whenever production is already running.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -564,7 +784,7 @@ pub fn run() {
             let mut runtime_tabs = HashMap::new();
             for tab in &store.tabs {
                 if tab.status == "active" {
-                    let memory_dir = PathBuf::from(&tab.project_path).join(".claude-memory");
+                    let memory_dir = PathBuf::from(&tab.project_path).join(".node-memory");
                     runtime_tabs.insert(tab.id.clone(), TabInfo {
                         id: tab.id.clone(),
                         project_dir: tab.project_path.clone(),
@@ -577,6 +797,10 @@ pub fn run() {
             }
             eprintln!("[workspace] Restored {} active tabs (without PTY)", runtime_tabs.len());
 
+            // Load persisted settings
+            let settings = app_settings::load_settings(&app_data_dir);
+            eprintln!("[workspace] Loaded settings: project_primary={}", settings.project_primary_model);
+
             app.manage(AppState {
                 processes: ManagedProcesses::new(),
                 logs: LogBuffer::new(),
@@ -584,6 +808,8 @@ pub fn run() {
                 active_tab: Mutex::new(store.active_tab_id.clone()),
                 app_data_dir,
                 tab_store: Mutex::new(store),
+                settings: Mutex::new(settings),
+                pending_auth_pid: Mutex::new(None),
             });
 
             Ok(())
@@ -599,6 +825,7 @@ pub fn run() {
             create_scratch_tab,
             detect_project_memory,
             scaffold_project_cmd,
+            sync_memory_structure,
             get_migration_file_contents,
             update_claude_md_references,
             close_tab,
@@ -624,6 +851,15 @@ pub fn run() {
             get_log_history,
             // File explorer
             open_project_folder,
+            // Settings
+            get_app_settings,
+            save_app_settings,
+            get_available_models,
+            // Copilot auth
+            get_copilot_auth_status,
+            start_copilot_auth,
+            cancel_copilot_auth,
+            sign_out_copilot,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

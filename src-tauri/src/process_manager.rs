@@ -124,7 +124,9 @@ fn tree_kill(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// Spawn a thread that reads lines from a process stream and emits log entries
+/// Spawn a thread that reads lines from a process stream and emits log entries.
+/// Also forwards copilot-api device-flow lines as frontend events so the
+/// settings panel can surface the code when the proxy auto-reauths on restart.
 fn pipe_output_to_logs(
     reader: impl std::io::Read + Send + 'static,
     app: AppHandle,
@@ -137,6 +139,15 @@ fn pipe_output_to_logs(
             match line {
                 Ok(line) if !line.is_empty() => {
                     logging::emit_log(&app, &logs, &source, "info", &line);
+                    // Surface proxy-initiated device flow to the settings panel.
+                    // The frontend urlOpenedRef guard ensures the browser only
+                    // opens once even if both this and start_copilot_auth emit.
+                    if line.contains("login/device") || line.contains("enter the code") {
+                        let _ = app.emit("copilot-auth-output", &line);
+                    } else if line.contains("Logged in as") {
+                        let _ = app.emit("copilot-auth-output", &line);
+                        let _ = app.emit("copilot-auth-done", true);
+                    }
                 }
                 Err(_) => break,
                 _ => {}

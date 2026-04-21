@@ -10,6 +10,7 @@ interface ProjectsViewProps {
   onSwitchTab: (tabId: string) => void;
   onReopenTab: (tabId: string) => void;
   onRemoveTab: (tabId: string) => void;
+  onSettings: () => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
@@ -21,6 +22,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onSwitchTab,
   onReopenTab,
   onRemoveTab,
+  onSettings,
 }) => {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </button>
           <button className="btn btn-chat" onClick={() => handleCreate(onCreateChat)} disabled={creating}>
             💬 New Chat
+          </button>
+          <button className="btn btn-settings" onClick={onSettings} title="Settings">
+            ⚙ Settings
           </button>
         </div>
       </div>
@@ -131,6 +136,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <p>Click "+ New Project" to open a folder, or "💬 New Chat" for a quick conversation.</p>
         </div>
       )}
+
     </div>
   );
 };

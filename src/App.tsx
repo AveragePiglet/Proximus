@@ -1,4 +1,6 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { TitleBar } from "./components/TitleBar";
 import { Toolbar } from "./components/Toolbar";
 import { Sidebar } from "./components/Sidebar";
@@ -8,6 +10,7 @@ import { ProjectsView } from "./components/ProjectsView";
 import { StatusBar } from "./components/StatusBar";
 import { QuickActions } from "./components/QuickActions";
 import MigrationDialog from "./components/MigrationDialog";
+import SettingsDialog from "./components/SettingsDialog";
 import { useTabStore } from "./hooks/useTabStore";
 import "./styles/global.css";
 
@@ -20,6 +23,7 @@ function App() {
     activeTabId,
     migrationPending,
     dismissMigration,
+    toast,
     createTab,
     createScratchTab,
     closeTab,
@@ -30,7 +34,31 @@ function App() {
 
   const [showProjects, setShowProjects] = useState(!activeTabId);
   const [recovering, setRecovering] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [pendingAuthCode, setPendingAuthCode] = useState<string | null>(null);
+  const [pendingAuthUrl, setPendingAuthUrl] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
+  const proxyAuthUrlOpenedRef = useRef(false);
+
+  // Global listener for proxy-initiated device flow (active even when Settings is closed)
+  useEffect(() => {
+    let unlistenOutput: (() => void) | null = null;
+
+    listen<string>("copilot-auth-output", (e) => {
+      const line = e.payload;
+      const codeMatch = line.match(/"([A-Z0-9]{4}-[A-Z0-9]{4})"/);
+      const urlMatch = line.match(/(https:\/\/github\.com\/login\/device[^\s]*)/);
+      if (codeMatch) setPendingAuthCode(codeMatch[1]);
+      if (urlMatch && !proxyAuthUrlOpenedRef.current) {
+        proxyAuthUrlOpenedRef.current = true;
+        setPendingAuthUrl(urlMatch[1]);
+        setShowSettings(true);
+        openUrl(urlMatch[1]).catch(() => {});
+      }
+    }).then(u => { unlistenOutput = u; });
+
+    return () => { unlistenOutput?.(); };
+  }, []);
 
   const handleSwitch = useCallback(async (tabId: string) => {
     await switchTab(tabId);
@@ -76,6 +104,7 @@ function App() {
             onSwitchTab={handleSwitch}
             onReopenTab={handleReopen}
             onRemoveTab={removeTab}
+            onSettings={() => setShowSettings(true)}
           />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
@@ -94,6 +123,19 @@ function App() {
           onComplete={dismissMigration}
         />
       )}
+      {showSettings && (
+        <SettingsDialog
+          initialAuthCode={pendingAuthCode}
+          initialAuthUrl={pendingAuthUrl}
+          onClose={() => {
+            setShowSettings(false);
+            setPendingAuthCode(null);
+            setPendingAuthUrl(null);
+            proxyAuthUrlOpenedRef.current = false;
+          }}
+        />
+      )}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

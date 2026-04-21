@@ -154,12 +154,12 @@ pub fn read_node_file(memory_dir: &Path, node_id: &str) -> Result<String, String
     std::fs::read_to_string(&path).map_err(|e| format!("Failed to read node file: {}", e))
 }
 
-/// Start watching .claude-memory/ and emit events on changes (legacy, no tab_id)
+/// Start watching .node-memory/ and emit events on changes (legacy, no tab_id)
 pub fn start_watcher(app: AppHandle, memory_dir: PathBuf) {
     start_watcher_for_tab(app, memory_dir, String::new());
 }
 
-/// Start watching a tab's .claude-memory/ and emit events tagged with tab_id
+/// Start watching a tab's .node-memory/ and emit events tagged with tab_id
 pub fn start_watcher_for_tab(app: AppHandle, memory_dir: PathBuf, tab_id: String) {
     std::thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
