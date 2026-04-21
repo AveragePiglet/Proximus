@@ -1,3 +1,0 @@
-# Nodes: N.<id> — entities in your codebase
-# Edges: relationships between nodes
-# Each node: L0 (<=3 tokens), L1 (<=20 tokens), L2 (<=80 tokens or @file)
