@@ -26,6 +26,7 @@ uuid = { version = "1", features = ["v4"] }
 tauri-plugin-dialog = "2"
 chrono = "0.4"
 dirs = "5"
+regex = { version = "1", features = ["std"] }
 include_dir = "0.7"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy"] }

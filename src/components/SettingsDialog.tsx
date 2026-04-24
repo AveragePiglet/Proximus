@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import CliModeWarningModal from "./CliModeWarningModal";
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -20,6 +21,8 @@ interface AppSettings {
   project_secondary_model: string;
   chat_model: string;
   dangerously_skip_permissions: boolean;
+  cli_mode: "claude" | "copilot";
+  copilot_model: string;
 }
 
 const TIER_LABELS: Record<string, string> = {
@@ -172,22 +175,28 @@ function AccountSection({ initialAuthCode, initialAuthUrl }: { initialAuthCode?:
 
 export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUrl }: SettingsDialogProps) {
   const [models, setModels] = useState<ModelEntry[]>([]);
+  const [copilotModels, setCopilotModels] = useState<ModelEntry[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
     project_primary_model: "",
     project_secondary_model: "",
     chat_model: "",
     dangerously_skip_permissions: false,
+    cli_mode: "claude",
+    copilot_model: "gpt-5.4",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [pendingCliMode, setPendingCliMode] = useState<"claude" | "copilot" | null>(null);
 
   useEffect(() => {
     Promise.all([
       invoke<ModelEntry[]>("get_available_models"),
+      invoke<ModelEntry[]>("get_copilot_models"),
       invoke<AppSettings>("get_app_settings"),
-    ]).then(([m, s]) => {
+    ]).then(([m, cm, s]) => {
       setModels(m);
+      setCopilotModels(cm);
       setSettings(s);
       setLoading(false);
     }).catch((e) => {
@@ -253,6 +262,7 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
   );
 
   return (
+    <>
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="settings-dialog-header">
@@ -272,14 +282,44 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
             <h4 className="settings-section-title">Terminal</h4>
             <div className="settings-section-divider" />
 
+            {/* CLI Mode toggle */}
             <div className="settings-field">
+              <span className="settings-field-label">CLI Mode</span>
+              <span className="settings-field-desc">
+                Choose how the terminal launches. Switching mode will close all open tabs.
+              </span>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  className={`cli-mode-btn${settings.cli_mode === "claude" ? " cli-mode-btn--active" : ""}`}
+                  onClick={() => { if (settings.cli_mode !== "claude") setPendingCliMode("claude"); }}
+                  disabled={loading}
+                >
+                  Claude CLI + Copilot Proxy
+                </button>
+                <button
+                  className={`cli-mode-btn${settings.cli_mode === "copilot" ? " cli-mode-btn--active" : ""}`}
+                  onClick={() => { if (settings.cli_mode !== "copilot") setPendingCliMode("copilot"); }}
+                  disabled={loading}
+                >
+                  Copilot CLI
+                </button>
+              </div>
+            </div>
+
+            <div className={`settings-field${settings.cli_mode === "copilot" ? " settings-field--disabled" : ""}`} style={{ marginTop: 16 }}>
               <div className="settings-toggle-row">
                 <label className="settings-toggle-label">
-                  <span className="settings-field-label">Skip permission prompts</span>
+                  <span className="settings-field-label">
+                    Skip permission prompts
+                    {settings.cli_mode === "copilot" && (
+                      <span className="settings-field-note"> — Claude only</span>
+                    )}
+                  </span>
                   <label className="settings-toggle">
                     <input
                       type="checkbox"
                       checked={settings.dangerously_skip_permissions}
+                      disabled={settings.cli_mode === "copilot"}
                       onChange={(e) => {
                         setSettings((prev) => ({ ...prev, dangerously_skip_permissions: e.target.checked }));
                         setSaved(false);
@@ -292,10 +332,10 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
               <div className="settings-warning">
                 <span className="settings-warning-icon">&#9888;</span>
                 <span>
-                  Launches Claude with <code>--dangerously-skip-permissions</code>.
-                  This allows Claude to execute commands, edit files, and access the
-                  internet <strong>without asking for confirmation</strong>. Only
-                  enable this if you fully understand the risks.
+                  {settings.cli_mode === "copilot"
+                    ? <>Not applicable in Copilot mode. Switch to Claude mode to use this setting.</>
+                    : <>Launches Claude with <code>--dangerously-skip-permissions</code>. This allows Claude to execute commands, edit files, and access the internet <strong>without asking for confirmation</strong>. Only enable this if you fully understand the risks.</>
+                  }
                 </span>
               </div>
             </div>
@@ -306,34 +346,85 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
             <h4 className="settings-section-title">Models</h4>
             <div className="settings-section-divider" />
 
-            <div className="settings-model-note">
-              Model selection is applied when a new tab is opened. Models are loaded
-              live from the Claude CLI — newest versions appear automatically.
-            </div>
+            {/* Active mode block renders first, inactive below dimmed */}
+            {(() => {
+              const claudeBlock = (
+                <div className={settings.cli_mode === "copilot" ? "settings-field--disabled" : ""}>
+                  <div className="settings-model-note">
+                    {settings.cli_mode === "copilot"
+                      ? "Claude model selection is not used in Copilot mode."
+                      : "Model selection is applied when a new tab is opened. Models are loaded live from the Claude CLI — newest versions appear automatically."
+                    }
+                  </div>
+                  <div className="settings-fields">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <div className="settings-field-group-label" style={{ margin: 0 }}>Projects</div>
+                      <button
+                        className="btn-icon-sm"
+                        title="Refresh model list from Claude CLI"
+                        onClick={async () => {
+                          try {
+                            const refreshed = await invoke<ModelEntry[]>("get_available_models");
+                            if (refreshed.length > 0) setModels(refreshed);
+                          } catch (e) { console.warn("get_available_models failed:", e); }
+                        }}
+                      >⟳ Refresh</button>
+                    </div>
+                    <ModelSelect label="Primary model" description="Used for deep thinking, planning, and architecture — launched when you open a project." settingKey="project_primary_model" />
+                    <ModelSelect label="Fallback model" description="Automatically used when the primary model is overloaded." settingKey="project_secondary_model" />
+                    <div className="settings-field-group-label" style={{ marginTop: 16 }}>Chats</div>
+                    <ModelSelect label="Chat model" description="Used for quick conversations and scratch tabs." settingKey="chat_model" />
+                  </div>
+                </div>
+              );
 
-            <div className="settings-fields">
-              <div className="settings-field-group-label">Projects</div>
+              const copilotBlock = (
+                <div className={settings.cli_mode === "claude" ? "settings-field--disabled" : ""} style={{ marginTop: 16 }}>
+                  <div className="settings-model-note">
+                    {settings.cli_mode === "claude"
+                      ? "Copilot model selection is not used in Claude mode."
+                      : "Passed as --model when launching the Copilot CLI."
+                    }
+                  </div>
+                  <div className="settings-fields">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <div className="settings-field-group-label" style={{ margin: 0 }}>Copilot</div>
+                      <button
+                        className="btn-icon-sm"
+                        title="Scan installed Copilot CLI for latest models"
+                        onClick={async () => {
+                          try {
+                            const scanned = await invoke<ModelEntry[]>("scan_copilot_models");
+                            if (scanned.length > 0) setCopilotModels(scanned);
+                          } catch (e) { console.warn("scan_copilot_models failed:", e); }
+                        }}
+                      >⟳ Refresh</button>
+                    </div>
+                    <div className="settings-field">
+                      <label className="settings-field-label">Model</label>
+                      <select
+                        className="settings-select"
+                        value={settings.copilot_model}
+                        disabled={loading || settings.cli_mode === "claude"}
+                        onChange={(e) => {
+                          setSettings((prev) => ({ ...prev, copilot_model: e.target.value }));
+                          setSaved(false);
+                        }}
+                      >
+                        {loading && <option value="">Loading…</option>}
+                        {copilotModels.map((m) => (
+                          <option key={m.id} value={m.id}>{m.display_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              );
 
-              <ModelSelect
-                label="Primary model"
-                description="Used for deep thinking, planning, and architecture — launched when you open a project."
-                settingKey="project_primary_model"
-              />
-
-              <ModelSelect
-                label="Fallback model"
-                description="Automatically used when the primary model is overloaded."
-                settingKey="project_secondary_model"
-              />
-
-              <div className="settings-field-group-label" style={{ marginTop: 16 }}>Chats</div>
-
-              <ModelSelect
-                label="Chat model"
-                description="Used for quick conversations and scratch tabs."
-                settingKey="chat_model"
-              />
-            </div>
+              return settings.cli_mode === "copilot"
+                ? <>{copilotBlock}{claudeBlock}</>
+                : <>{claudeBlock}{copilotBlock}</>;
+            })()}
 
           </section>
 
@@ -351,5 +442,28 @@ export default function SettingsDialog({ onClose, initialAuthCode, initialAuthUr
         </div>
       </div>
     </div>
+
+    {pendingCliMode && (
+      <CliModeWarningModal
+        targetMode={pendingCliMode}
+        projectPath={null}
+        onCancel={() => setPendingCliMode(null)}
+        onConfirm={async (syncFiles) => {
+          const newMode = pendingCliMode;
+          setPendingCliMode(null);
+          setSettings((prev) => ({ ...prev, cli_mode: newMode }));
+          setSaved(false);
+          try {
+            await invoke("save_app_settings", {
+              settings: { ...settings, cli_mode: newMode },
+            });
+            await invoke("apply_cli_mode", { mode: newMode, syncFiles });
+          } catch (e) {
+            console.error("Failed to apply CLI mode:", e);
+          }
+        }}
+      />
+    )}
+    </>
   );
 }

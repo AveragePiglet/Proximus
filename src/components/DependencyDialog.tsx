@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 interface DependencyDialogProps {
   claudeMissing: boolean;
   copilotApiMissing: boolean;
+  copilotCliMissing: boolean;
   onResolved: () => void;
   onSkip: () => void;
 }
@@ -11,6 +12,7 @@ interface DependencyDialogProps {
 export default function DependencyDialog({
   claudeMissing,
   copilotApiMissing,
+  copilotCliMissing,
   onResolved,
   onSkip,
 }: DependencyDialogProps) {
@@ -24,13 +26,14 @@ export default function DependencyDialog({
       await invoke("install_dependencies", {
         installClaude: claudeMissing,
         installCopilotApi: copilotApiMissing,
+        installCopilotCli: copilotCliMissing,
       });
       onResolved();
     } catch (e) {
       setError(String(e));
       setInstalling(false);
     }
-  }, [claudeMissing, copilotApiMissing, onResolved]);
+  }, [claudeMissing, copilotApiMissing, copilotCliMissing, onResolved]);
 
   return (
     <div className="migration-overlay">
@@ -51,6 +54,12 @@ export default function DependencyDialog({
             <div className="dep-item">
               <span className="dep-name">Copilot API</span>
               <code className="dep-cmd">npm install -g copilot-api</code>
+            </div>
+          )}
+          {copilotCliMissing && (
+            <div className="dep-item">
+              <span className="dep-name">Copilot CLI</span>
+              <code className="dep-cmd">npm install -g @github/copilot</code>
             </div>
           )}
         </div>

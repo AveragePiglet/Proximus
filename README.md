@@ -278,6 +278,7 @@ npm run tauri build
 - [x] **Phase 1** — Core shell: Tauri app, PTY terminal, process management, proxy chain
 - [x] **Phase 2** — Memory & UI: Live graph visualization, sidebar panels, logs, scaffolding
 - [x] **Phase 3** — Multi-agent workspace: Parallel Claude sessions
+- [x] **Phase 4** — CLI Mode Toggle: Switch between Claude CLI + Copilot Proxy and Copilot CLI directly
 
 ## Known Issues
 
@@ -285,11 +286,44 @@ npm run tauri build
 |-------|--------|
 | Claude Code ASCII animation pollutes xterm scrollback | Open |
 | Status badge doesn't reflect actual PTY state | Open |
-| Small black bar between terminal and quick actions (xterm row snapping) | Won't fix |
 | LogsPanel and MemoryGraphView use hard-coded colors (not theme-aware) | Open |
 | Auto-migration `Enter` delay uses fixed 2s sleep — may be unreliable on slow machines | Open |
 
 ## Patch Notes
+
+### v0.9 — CLI Mode Toggle (2026-04-24)
+
+**New Features**
+- **CLI Mode toggle** — Settings now has a Terminal section where you can switch between two modes:
+  - **Claude CLI + Copilot Proxy** — the original mode: Claude Code runs through the model-rewrite proxy backed by GitHub Copilot's API
+  - **Copilot CLI** — launches the `@github/copilot` terminal CLI directly, using your existing Copilot auth token with no proxy chain needed
+- **Automatic file sync** — Switching modes translates your project config between formats:
+  - Claude → Copilot: `CLAUDE.md` → `.github/copilot-instructions.md`, `.claude/skills/*/SKILL.md` → `.github/prompts/*.prompt.md`
+  - Copilot → Claude: reverse direction, strips YAML frontmatter, adds import headers
+- **Auto-seed on first open** — When opening a project in Copilot mode for the first time, if `.github/copilot-instructions.md` is missing but `CLAUDE.md` exists, the Copilot files are generated automatically before the terminal launches (and vice-versa). No manual `/init` needed.
+- **Copilot auto-login** — The GitHub OAuth token stored by `copilot-api` is injected as `GITHUB_TOKEN`/`GH_TOKEN` into the Copilot CLI's PTY environment, so it starts authenticated without prompting for `/login`.
+- **Auto-open Settings on launch** — If not signed in to Copilot, Settings opens automatically on startup.
+- **Copilot model selection** — A new Copilot model dropdown in Settings lets you choose which model the CLI launches with (`--model` flag). Includes the full current model list: GPT-5.4, GPT-5.4 Mini/Nano, GPT-5.x Codex variants, GPT-4.1, GPT-4o, Claude Opus/Sonnet, Gemini 2.5 Pro/3.1.
+- **Scan for latest models** — A ⟳ Refresh button next to the Copilot model list scans the installed CLI's `app.js` at runtime and extracts all model IDs — no app update needed when Copilot ships new models.
+- **Claude model refresh** — A matching ⟳ Refresh button re-runs `claude models --json` live to pick up newly released Claude models.
+- **Active mode models shown first** — In Settings → Models, the active CLI mode's model section always appears at the top; the inactive one is dimmed below it.
+- **Dependency check updated** — Startup dependency dialog now also checks for the `@github/copilot` CLI package and offers to install it.
+- **`sync_cli_files` Tauri command** — Exposes file sync to the frontend, callable on demand when switching modes.
+
+**Settings UX**
+- CLI Mode toggle moved above Skip Permission Prompts in the Terminal section
+- Skip Permission Prompts toggle is disabled and explained when Copilot mode is active (the flag is Claude-only)
+- Tabs are closed and the project picker is shown when CLI mode changes, so the next tab opens fresh in the new mode
+
+**Bug Fixes**
+- Fixed black bar between terminal and QuickActions bar caused by xterm.js row snapping — QuickActions overlaps the gap with `margin-top: -14px`, and the terminal wrapper clips the scrollbar with `clipPath: inset(0 0 14px 0)` to prevent overlap
+- Fixed context token count showing cumulative `total_input_tokens` instead of current usage — now derived from `used_percentage × context_window_size`
+- Fixed proxy chain starting even in Copilot mode — toolbar now reads `cli_mode` from persisted settings before deciding whether to launch proxies
+- Fixed crash when switching Copilot → Claude — `cleanup_orphans()` was blocking the Tokio runtime with `std::thread::sleep`; moved to `spawn_blocking`
+- Fixed process status badges not updating after mode switch — `apply_cli_mode` now emits `process-status` stopped events after calling `stop_all()`
+- Fixed restored tabs (from `reopen_tab`) bypassing the auto-seed logic — both `spawn_tab_pty` and `reopen_tab` PTY paths now run the file sync check
+
+---
 
 ### v0.8.2 — Model Rewrite Fix + Auth & Dependency Checks (2026-04-21)
 

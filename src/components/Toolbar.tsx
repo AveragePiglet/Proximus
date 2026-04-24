@@ -28,6 +28,7 @@ const waitForCopilotProxy = async (
 interface DepStatus {
   claude_installed: boolean;
   copilot_api_installed: boolean;
+  copilot_cli_installed: boolean;
 }
 
 export const Toolbar: React.FC = () => {
@@ -44,7 +45,7 @@ export const Toolbar: React.FC = () => {
     setStatus("Checking dependencies...");
     try {
       const deps = await invoke<DepStatus>("check_dependencies");
-      if (deps.claude_installed && deps.copilot_api_installed) {
+      if (deps.claude_installed && deps.copilot_api_installed && deps.copilot_cli_installed) {
         return true; // all good
       }
       // Show dialog and wait for resolution
@@ -133,11 +134,17 @@ export const Toolbar: React.FC = () => {
     await startProxyChain();
   };
 
-  // Auto-start on mount
+  // Auto-start on mount — skip proxy chain if cli_mode is "copilot"
   useEffect(() => {
     if (!hasAutoStarted.current) {
       hasAutoStarted.current = true;
-      startProxyChain();
+      invoke<{ cli_mode: string }>("get_app_settings")
+        .then((s) => {
+          if (s.cli_mode !== "copilot") {
+            startProxyChain();
+          }
+        })
+        .catch(() => startProxyChain()); // if settings fail, start anyway
     }
   }, []);
 
@@ -165,6 +172,7 @@ export const Toolbar: React.FC = () => {
         <DependencyDialog
           claudeMissing={!depCheck.claude_installed}
           copilotApiMissing={!depCheck.copilot_api_installed}
+          copilotCliMissing={!depCheck.copilot_cli_installed}
           onResolved={handleDepResolved}
           onSkip={handleDepSkip}
         />

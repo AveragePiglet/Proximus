@@ -143,3 +143,13 @@ pub fn update_tab_stats(store: &mut TabStore, tab_id: &str, pty_started_at: Opti
         }
     }
 }
+
+/// Mark every active tab as closed and clear the active tab pointer.
+pub fn close_all(store: &mut TabStore) {
+    for tab in store.tabs.iter_mut() {
+        if tab.status == "active" {
+            tab.status = "closed".into();
+        }
+    }
+    store.active_tab_id = None;
+}

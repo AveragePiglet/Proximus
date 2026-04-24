@@ -13,6 +13,7 @@ pub struct LogEntry {
     pub message: String,
 }
 
+#[derive(Clone)]
 pub struct LogBuffer {
     entries: Arc<Mutex<VecDeque<LogEntry>>>,
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { TitleBar } from "./components/TitleBar";
 import { Toolbar } from "./components/Toolbar";
@@ -30,6 +31,7 @@ function App() {
     switchTab,
     reopenTab,
     removeTab,
+    refresh,
   } = useTabStore();
 
   const [showProjects, setShowProjects] = useState(!activeTabId);
@@ -39,6 +41,13 @@ function App() {
   const [pendingAuthUrl, setPendingAuthUrl] = useState<string | null>(null);
   const terminalRef = useRef<TerminalHandle | null>(null);
   const proxyAuthUrlOpenedRef = useRef(false);
+
+  // Auto-open settings if not signed in to Copilot
+  useEffect(() => {
+    invoke<boolean>("get_copilot_auth_status").then((authed) => {
+      if (!authed) setShowSettings(true);
+    }).catch(() => {});
+  }, []);
 
   // Global listener for proxy-initiated device flow (active even when Settings is closed)
   useEffect(() => {
@@ -59,6 +68,36 @@ function App() {
 
     return () => { unlistenOutput?.(); };
   }, []);
+
+  // Close all tabs when CLI mode is switched
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ mode: string; sync_files: boolean }>("cli-mode-applied", async (e) => {
+      const { mode, sync_files } = e.payload;
+      // Sync files if requested — use the active project tab's path
+      if (sync_files) {
+        const activeTab = activeTabs.find((t) => t.id === activeTabId);
+        const projectPath = activeTab?.project_path;
+        if (projectPath) {
+          try {
+            // Determine sync direction: we just switched TO `mode`
+            const fromMode = mode === "copilot" ? "claude" : "copilot";
+            await invoke("sync_cli_files", { projectPath, fromMode, toMode: mode });
+          } catch (e) {
+            console.warn("sync_cli_files failed:", e);
+          }
+        }
+      }
+      try {
+        await invoke("close_all_tabs");
+      } catch (e) {
+        console.error("close_all_tabs failed:", e);
+      }
+      await refresh();
+      setShowProjects(true);
+    }).then((u) => { unlisten = u; });
+    return () => { unlisten?.(); };
+  }, [refresh, activeTabs, activeTabId]);
 
   const handleSwitch = useCallback(async (tabId: string) => {
     await switchTab(tabId);

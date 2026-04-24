@@ -45,8 +45,10 @@ export function useTabStatus(tabId: string | null) {
       try {
         const ctx = await invoke<ProximusStats>("get_context_usage", { tabId });
         s.context_percent = ctx.used_percentage ?? 0;
-        s.tokens_used = ctx.total_input_tokens ?? 0;
         s.tokens_total = ctx.context_window_size ?? 200000;
+        // Derive tokens_used from the percentage so the displayed number
+        // matches what /context reports (total_input_tokens is cumulative, not current)
+        s.tokens_used = Math.round((s.context_percent / 100) * s.tokens_total);
         s.cost_usd = ctx.cost_usd ?? 0;
         s.model = ctx.model ?? "";
       } catch {

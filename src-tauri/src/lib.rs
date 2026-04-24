@@ -1,4 +1,5 @@
 mod app_settings;
+mod file_sync;
 mod logging;
 mod memory;
 mod model_rewriter;
@@ -166,11 +167,11 @@ fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> R
 
     // Spawn PTY for this tab — use project primary model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let (model, fallback_model, dangerous_mode) = {
+    let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode, &cli_mode, Some(copilot_model))?;
 
     // Start memory watcher for this tab's memory dir
     if memory_dir.exists() {
@@ -218,11 +219,11 @@ fn create_scratch_tab(state: State<AppState>, app: AppHandle) -> Result<String, 
 
     // Spawn PTY with no memory — use chat model from settings
     let rewriter_port = state.processes.get_rewriter_port();
-    let (model, dangerous_mode) = {
+    let (model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.chat_model.clone()), s.dangerously_skip_permissions)
+        (Some(s.chat_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None, dangerous_mode)?;
+    let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None, dangerous_mode, &cli_mode, Some(copilot_model))?;
 
     let tab_info = TabInfo {
         id: tab_id.clone(),
@@ -300,6 +301,24 @@ fn close_tab_by_id(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn close_all_tabs(state: State<AppState>) -> Result<(), String> {
+    // Drop all PTY handles (kills the shell processes)
+    let mut tabs = state.tabs.lock().map_err(|e| e.to_string())?;
+    tabs.clear();
+    drop(tabs);
+
+    // Clear active tab pointer
+    *state.active_tab.lock().map_err(|e| e.to_string())? = None;
+
+    // Persist: mark all as closed
+    let mut store = state.tab_store.lock().map_err(|e| e.to_string())?;
+    tab_store::close_all(&mut store);
+    tab_store::save_tabs(&state.app_data_dir, &store);
+
+    Ok(())
+}
+
+#[tauri::command]
 fn switch_tab(state: State<AppState>, tab_id: String) -> Result<(), String> {
     let tabs = state.tabs.lock().map_err(|e| e.to_string())?;
     if !tabs.contains_key(&tab_id) {
@@ -347,11 +366,35 @@ fn reopen_tab(state: State<AppState>, app: AppHandle, tab_id: String) -> Result<
     // Re-spawn PTY — use project primary model from settings
     let memory_dir = PathBuf::from(&tab_state.project_path).join(".node-memory");
     let rewriter_port = state.processes.get_rewriter_port();
-    let (model, fallback_model, dangerous_mode) = {
+    let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode)?;
+
+    // Auto-seed Copilot/Claude files on first open in each mode
+    {
+        let project_dir = &tab_state.project_path;
+        let copilot_instructions = std::path::Path::new(project_dir)
+            .join(".github")
+            .join("copilot-instructions.md");
+        let claude_md = std::path::Path::new(project_dir).join("CLAUDE.md");
+        eprintln!("[sync] check: cli_mode={} project={} claude_md_exists={} copilot_instructions_exists={}",
+            cli_mode, project_dir, claude_md.exists(), copilot_instructions.exists());
+        let should_sync = if cli_mode == "copilot" {
+            !copilot_instructions.exists() && claude_md.exists()
+        } else {
+            !claude_md.exists() && copilot_instructions.exists()
+        };
+        if should_sync {
+            let (from_mode, to_mode) = if cli_mode == "copilot" { ("claude", "copilot") } else { ("copilot", "claude") };
+            eprintln!("[sync] auto-seeding {} → {} for {}", from_mode, to_mode, project_dir);
+            if let Err(e) = file_sync::sync_cli_files(project_dir, from_mode, to_mode) {
+                eprintln!("[sync] auto-seed failed (non-fatal): {}", e);
+            }
+        }
+    }
+
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab_state.project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode, &cli_mode, Some(copilot_model))?;
 
     if memory_dir.exists() {
         memory::start_watcher_for_tab(app.clone(), memory_dir.clone(), tab_id.clone());
@@ -404,11 +447,44 @@ fn spawn_tab_pty(state: State<AppState>, app: AppHandle, tab_id: String) -> Resu
     }
     let rewriter_port = state.processes.get_rewriter_port();
     let has_memory = tab.memory_dir.exists();
-    let (model, fallback_model, dangerous_mode) = {
+    let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions)
+        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
-    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory, model, fallback_model, dangerous_mode)?;
+    // Auto-sync on first open: if switching into copilot mode and .github/copilot-instructions.md
+    // is missing but CLAUDE.md exists, seed the Copilot files from Claude's layout.
+    // Likewise, if switching into claude mode and CLAUDE.md is missing but copilot-instructions
+    // exists, seed from Copilot. This avoids Copilot asking to /init on every new project.
+    {
+        let project_dir = &tab.project_dir;
+        let copilot_instructions = std::path::Path::new(project_dir)
+            .join(".github")
+            .join("copilot-instructions.md");
+        let claude_md = std::path::Path::new(project_dir).join("CLAUDE.md");
+
+        eprintln!("[sync] check: cli_mode={} project={} claude_md_exists={} copilot_instructions_exists={}",
+            cli_mode, project_dir, claude_md.exists(), copilot_instructions.exists());
+
+        let should_sync = if cli_mode == "copilot" {
+            !copilot_instructions.exists() && claude_md.exists()
+        } else {
+            !claude_md.exists() && copilot_instructions.exists()
+        };
+
+        if should_sync {
+            let (from_mode, to_mode) = if cli_mode == "copilot" {
+                ("claude", "copilot")
+            } else {
+                ("copilot", "claude")
+            };
+            eprintln!("[sync] auto-seeding {} → {} for {}", from_mode, to_mode, project_dir);
+            if let Err(e) = file_sync::sync_cli_files(project_dir, from_mode, to_mode) {
+                eprintln!("[sync] auto-seed failed (non-fatal): {}", e);
+            }
+        }
+    }
+
+    let pty_state = pty::spawn_pty(&app, &tab_id, &tab.project_dir, rewriter_port, has_memory, model, fallback_model, dangerous_mode, &cli_mode, Some(copilot_model))?;
     tab.pty = Some(pty_state);
     let now = chrono::Utc::now().to_rfc3339();
     tab.pty_started_at = Some(now.clone());
@@ -599,6 +675,16 @@ fn get_available_models() -> Vec<app_settings::ModelEntry> {
     app_settings::get_available_models()
 }
 
+#[tauri::command]
+fn get_copilot_models() -> Vec<app_settings::ModelEntry> {
+    app_settings::get_copilot_models()
+}
+
+#[tauri::command]
+fn scan_copilot_models() -> Vec<app_settings::ModelEntry> {
+    app_settings::scan_copilot_models()
+}
+
 /// All candidate paths where copilot-api may store the GitHub token.
 /// Different versions of copilot-api use different locations.
 fn copilot_token_candidates() -> Vec<std::path::PathBuf> {
@@ -766,12 +852,83 @@ fn cancel_copilot_auth(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// ── File sync command ────────────────────────────────────────────
+
+#[tauri::command]
+fn sync_cli_files(
+    project_path: String,
+    from_mode: String,
+    to_mode: String,
+) -> Result<file_sync::SyncResult, String> {
+    eprintln!("[sync] {} → {} (project={})", from_mode, to_mode, project_path);
+    file_sync::sync_cli_files(&project_path, &from_mode, &to_mode)
+}
+
+// ── CLI mode switch ──────────────────────────────────────────────
+
+#[tauri::command]
+async fn apply_cli_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    mode: String,
+    sync_files: bool,
+) -> Result<(), String> {
+    logging::emit_log(
+        &app,
+        &state.logs,
+        "app",
+        "info",
+        &format!("Applying CLI mode switch → {}", mode),
+    );
+
+    match mode.as_str() {
+        "copilot" => {
+            // stop_all and cleanup_orphans are blocking — run off the async thread
+            let processes = state.processes.clone();
+            let app2 = app.clone();
+            let logs = state.logs.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                processes.stop_all();
+                processes.cleanup_orphans(&app2, &logs);
+            }).await.map_err(|e| e.to_string())?;
+            // Notify frontend badges that proxies are down
+            let _ = app.emit("process-status", serde_json::json!({"name": "copilot-proxy", "running": false, "port": null}));
+            let _ = app.emit("process-status", serde_json::json!({"name": "model-rewriter", "running": false, "port": null}));
+            logging::emit_log(&app, &state.logs, "app", "info", "Proxies stopped for Copilot CLI mode");
+        }
+        "claude" => {
+            // cleanup_orphans is blocking — run off the async thread first
+            let processes = state.processes.clone();
+            let app2 = app.clone();
+            let logs = state.logs.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                processes.cleanup_orphans(&app2, &logs);
+            }).await.map_err(|e| e.to_string())?;
+
+            let copilot_port = state.processes.start_copilot_proxy(&app, &state.logs)?;
+            state.processes.start_model_rewriter(&app, &state.logs, copilot_port).await?;
+            logging::emit_log(&app, &state.logs, "app", "info", "Proxies restarted for Claude CLI mode");
+        }
+        _ => return Err(format!("Unknown CLI mode: {}", mode)),
+    }
+
+    let _ = sync_files; // handled by frontend via sync_cli_files (Step 7)
+
+    let _ = app.emit("cli-mode-applied", serde_json::json!({
+        "mode": mode,
+        "sync_files": sync_files,
+    }));
+
+    Ok(())
+}
+
 // ── App setup ────────────────────────────────────────────────────
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct DependencyStatus {
     claude_installed: bool,
     copilot_api_installed: bool,
+    copilot_cli_installed: bool,
 }
 
 #[tauri::command]
@@ -820,19 +977,39 @@ fn check_dependencies() -> DependencyStatus {
             .unwrap_or(false)
     };
 
+    let copilot_cli_installed = {
+        let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.args(["/c", "copilot", "--version"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.args(["-c", "copilot --version"]);
+        }
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+
     eprintln!(
-        "[deps] claude_installed={}, copilot_api_installed={}",
-        claude_installed, copilot_api_installed
+        "[deps] claude_installed={}, copilot_api_installed={}, copilot_cli_installed={}",
+        claude_installed, copilot_api_installed, copilot_cli_installed
     );
 
     DependencyStatus {
         claude_installed,
         copilot_api_installed,
+        copilot_cli_installed,
     }
 }
 
 #[tauri::command]
-async fn install_dependencies(install_claude: bool, install_copilot_api: bool) -> Result<String, String> {
+async fn install_dependencies(install_claude: bool, install_copilot_api: bool, install_copilot_cli: bool) -> Result<String, String> {
     #[cfg(windows)]
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -881,6 +1058,29 @@ async fn install_dependencies(install_claude: bool, install_copilot_api: bool) -
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!("Failed to install Copilot API: {}", stderr));
+        }
+    }
+
+    if install_copilot_cli {
+        let output = {
+            let mut cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.args(["/c", "npm", "install", "-g", "@github/copilot"]);
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            #[cfg(not(windows))]
+            {
+                cmd.args(["-c", "npm install -g @github/copilot"]);
+            }
+            cmd.output().map_err(|e| format!("Failed to run npm install: {}", e))?
+        };
+        if output.status.success() {
+            results.push("Copilot CLI installed successfully".to_string());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to install Copilot CLI: {}", stderr));
         }
     }
 
@@ -969,6 +1169,7 @@ pub fn run() {
             update_claude_md_references,
             close_tab,
             close_tab_by_id,
+            close_all_tabs,
             switch_tab,
             get_tabs,
             get_active_tab_id,
@@ -994,6 +1195,8 @@ pub fn run() {
             get_app_settings,
             save_app_settings,
             get_available_models,
+            get_copilot_models,
+            scan_copilot_models,
             // Copilot auth
             get_copilot_auth_status,
             start_copilot_auth,
@@ -1002,6 +1205,8 @@ pub fn run() {
             // Dependency checks
             check_dependencies,
             install_dependencies,
+            apply_cli_mode,
+            sync_cli_files,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

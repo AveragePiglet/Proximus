@@ -190,7 +190,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
   }, [tabId]);
 
   return (
-    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", clipPath: "inset(0 0 14px 0)" }}>
       <div ref={termRef} className="terminal-container" />
       {locked && (
         <div className="terminal-lock-overlay">

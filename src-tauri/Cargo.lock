@@ -506,6 +506,7 @@ dependencies = [
  "include_dir",
  "notify",
  "portable-pty",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

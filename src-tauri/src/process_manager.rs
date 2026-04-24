@@ -169,6 +169,7 @@ pub struct PortAssignments {
     pub model_rewriter: u16,
 }
 
+#[derive(Clone)]
 pub struct ManagedProcesses {
     pub copilot_proxy: Arc<Mutex<Option<Child>>>,
     pub model_rewriter_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
