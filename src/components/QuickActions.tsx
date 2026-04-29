@@ -7,6 +7,12 @@ interface QuickActionsProps {
   terminalRef?: React.RefObject<TerminalHandle | null>;
   onRecoveringChange?: (recovering: boolean) => void;
   tabType?: string;
+  projectPath?: string;
+}
+
+interface ValidateResult {
+  passed: boolean;
+  output: string;
 }
 
 const ACTIONS = [
@@ -16,13 +22,57 @@ const ACTIONS = [
   { label: "Clear", command: "/clear", projectOnly: false },
 ];
 
-export const QuickActions: React.FC<QuickActionsProps> = ({ tabId, terminalRef, onRecoveringChange, tabType }) => {
+export const QuickActions: React.FC<QuickActionsProps> = ({ tabId, terminalRef, onRecoveringChange, tabType, projectPath }) => {
   const [recovering, setRecovering] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validateResult, setValidateResult] = useState<ValidateResult | null>(null);
   const isProject = tabType === "project";
   const visibleActions = ACTIONS.filter(a => !a.projectOnly || isProject);
 
   const run = (command: string) => {
     invoke("write_pty", { tabId, data: command + "\r" }).catch(() => {});
+  };
+
+  const validateMemory = async () => {
+    setValidating(true);
+    setValidateResult(null);
+    try {
+      const result = await invoke<ValidateResult>("validate_memory", { tabId });
+      setValidateResult(result);
+
+      const validatorStatus = result.passed
+        ? `validate.py PASSED: ${result.output}`
+        : `validate.py FAILED:\n${result.output}`;
+
+      const prompt = `Validate Memory — run a full memory health check now.
+
+Validator result: ${validatorStatus}
+
+Check each of the following and act on anything that needs fixing:
+1. state.toml — clear active_task if no task is running; verify next_action is still accurate; remove any known_issues that are confirmed fixed
+2. graph.toml — bump last_touched on any nodes you worked in this session; verify L0/L1 summaries are still accurate
+3. nodes/*.toml — update any L2 content that is stale or missing recent work
+4. journal/ — ensure today's session has an entry; append one if missing
+5. invariants.toml — add any new hard rules discovered this session
+6. plans/ — if state.toml references an active_plan, verify it is up to date; if a plan was completed, mark it done; check no plan files exist in the project root (⊥ loose plans outside .node-memory/plans/)
+7. Hard rules audit — verify none of these are violated:
+   - ⊥ prose paragraphs in memory files (lists and structured TOML only)
+   - ⊥ duplicating facts across files (reference by ID instead)
+   - ⊥ nodes without at least one edge
+   - ⊥ plan files outside .node-memory/plans/
+   - ⊤ node files ≤ 120 lines (fix any that exceed this)
+   - ⊤ every bug, invariant, decision, task has a stable ID
+8. If validate.py failed — fix the specific errors reported above before anything else
+
+After completing all checks, run validate.py again (python .node-memory/tools/validate.py) and confirm it passes.`;
+
+      run(prompt);
+    } catch (e) {
+      setValidateResult({ passed: false, output: `Error: ${e}` });
+    } finally {
+      setValidating(false);
+      setTimeout(() => setValidateResult(null), 6000);
+    }
   };
 
   const recover = async () => {
@@ -65,15 +115,45 @@ export const QuickActions: React.FC<QuickActionsProps> = ({ tabId, terminalRef, 
 
   return (
     <div className="quick-actions">
-      <span className="quick-actions-label">Actions</span>
-      {visibleActions.map((a) => (
-        <button key={a.command} className="quick-action-btn" onClick={() => run(a.command)} disabled={recovering}>
-          {a.label}
+      {/* Left group — workflow actions */}
+      <div className="quick-actions-group">
+        {visibleActions.map((a) => (
+          <button key={a.command} className="quick-action-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => run(a.command)} disabled={recovering}>
+            {a.label}
+          </button>
+        ))}
+        {isProject && (
+          <button
+            className={`quick-action-btn validate ${validateResult ? (validateResult.passed ? "validate-pass" : "validate-fail") : ""}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={validateMemory}
+            disabled={recovering || validating}
+            title={validateResult?.output ?? "Run validate.py and ask AI to review outstanding memory items"}
+          >
+            {validating ? "Validating…" : validateResult ? (validateResult.passed ? "✓ Valid" : "✗ Invalid") : "Validate Memory"}
+          </button>
+        )}
+      </div>
+
+      <div className="quick-actions-spacer" />
+
+      {/* Right group — folder + danger */}
+      <div className="quick-actions-divider" />
+      <div className="quick-actions-group">
+        {isProject && projectPath && (
+          <button
+            className="quick-action-btn open-folder"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => invoke("open_project_folder", { path: projectPath }).catch(() => {})}
+            title="Open project folder in file explorer"
+          >
+            Open Folder
+          </button>
+        )}
+        <button className="quick-action-btn recover" onMouseDown={(e) => e.preventDefault()} onClick={recover} disabled={recovering}>
+          {recovering ? "Recovering…" : "⟳ Recover"}
         </button>
-      ))}
-      <button className="quick-action-btn recover" onClick={recover} disabled={recovering}>
-        {recovering ? "Recovering..." : "Recover"}
-      </button>
+      </div>
     </div>
   );
 };

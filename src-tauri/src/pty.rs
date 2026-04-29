@@ -1,6 +1,7 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -9,6 +10,9 @@ pub struct PtyState {
     // Must keep child and master alive or the PTY closes
     _child: Mutex<Box<dyn Child + Send + Sync>>,
     _master: Mutex<Box<dyn MasterPty + Send>>,
+    /// Set to true when the tab is being closed to prevent the delayed auto-launch
+    /// thread from writing to a PTY that is no longer alive.
+    launch_cancelled: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,8 +72,14 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
     let tab_id_launch = tab_id.to_string();
     let cli_mode_owned = cli_mode.to_string();
     let copilot_model_owned = copilot_model.clone();
+    let launch_cancelled = Arc::new(AtomicBool::new(false));
+    let launch_cancelled_thread = launch_cancelled.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
+        // Bail if the tab was closed before the delay elapsed
+        if launch_cancelled_thread.load(Ordering::Relaxed) {
+            return;
+        }
         if let Ok(mut w) = writer_clone.lock() {
             let clear = if cfg!(windows) { "cls" } else { "clear" };
 
@@ -141,15 +151,27 @@ pub fn spawn_pty(app: &AppHandle, tab_id: &str, project_dir: &str, rewriter_port
         writer,
         _child: Mutex::new(child),
         _master: Mutex::new(pair.master),
+        launch_cancelled,
     })
 }
 
-pub fn write_to_pty(state: &PtyState, data: &str) -> Result<(), String> {
+/// Signal the auto-launch thread to abort. Call this before dropping the PtyState
+/// so the 800 ms thread cannot write to a PTY that is no longer alive.
+pub fn cancel_launch(state: &PtyState) {
+    state.launch_cancelled.store(true, Ordering::Relaxed);
+}
+
+/// Write `data` to the PTY.
+///
+/// `bracketed_paste` wraps the data in the bracketed-paste escape sequences
+/// (`\x1b[200~` … `\x1b[201~`).  Pass `true` only when deliberately pasting
+/// multi-line user content — not for every large or newline-containing write,
+/// because some shells/programs do not support bracketed paste and interpret
+/// the sequences as literal text.
+pub fn write_to_pty(state: &PtyState, data: &str, bracketed_paste: bool) -> Result<(), String> {
     let mut writer = state.writer.lock().map_err(|e| format!("{}", e))?;
 
-    // Use bracketed paste mode for multi-line or large content
-    // This tells the terminal app (e.g. Claude Code) to treat it as pasted text
-    if data.contains('\n') || data.len() > 200 {
+    if bracketed_paste {
         writer
             .write_all(b"\x1b[200~")
             .map_err(|e| format!("PTY write error: {}", e))?;

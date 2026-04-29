@@ -29,6 +29,16 @@ pub struct AppSettings {
     /// Model passed to `copilot --model` when cli_mode is "copilot".
     #[serde(default = "default_copilot_model")]
     pub copilot_model: String,
+
+    /// OpenRouter API key. When non-empty and cli_mode is "claude",
+    /// Claude Code is pointed directly at OpenRouter instead of copilot-api.
+    /// Serialised to disk but never returned over Tauri IPC (redacted in get_app_settings).
+    #[serde(default)]
+    pub openrouter_api_key: String,
+
+    /// Model to use when routing via OpenRouter (e.g. "anthropic/claude-sonnet-4-5").
+    #[serde(default = "default_openrouter_model")]
+    pub openrouter_model: String,
 }
 
 fn default_project_primary() -> String {
@@ -51,6 +61,10 @@ fn default_copilot_model() -> String {
     "gpt-5.4".to_string()
 }
 
+fn default_openrouter_model() -> String {
+    "anthropic/claude-sonnet-4-5".to_string()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -60,6 +74,8 @@ impl Default for AppSettings {
             dangerously_skip_permissions: false,
             cli_mode: default_cli_mode(),
             copilot_model: default_copilot_model(),
+            openrouter_api_key: String::new(),
+            openrouter_model: default_openrouter_model(),
         }
     }
 }
@@ -92,8 +108,13 @@ pub fn save_settings(app_data_dir: &Path, settings: &AppSettings) {
     }
     match serde_json::to_string_pretty(settings) {
         Ok(json) => {
-            if let Err(e) = fs::write(&path, json) {
-                eprintln!("[settings] Failed to write settings.json: {}", e);
+            // Atomic write: write to a .tmp file then rename into place so a crash
+            // mid-write never leaves settings.json truncated or empty.
+            let tmp_path = path.with_extension("json.tmp");
+            if let Err(e) = fs::write(&tmp_path, &json) {
+                eprintln!("[settings] Failed to write settings.json.tmp: {}", e);
+            } else if let Err(e) = fs::rename(&tmp_path, &path) {
+                eprintln!("[settings] Failed to replace settings.json: {}", e);
             }
         }
         Err(e) => {
@@ -249,6 +270,21 @@ fn fallback_models() -> Vec<ModelEntry> {
             display_name: "Claude Haiku 4.5".to_string(),
             tier: "haiku".to_string(),
         },
+    ]
+}
+
+/// Proxy-alias models: GPT/Gemini models available via copilot-api in Claude mode.
+/// These use "claude-gpt-*" IDs so Claude Code accepts them; the model-rewrite
+/// proxy strips the "claude-" prefix and rewrites to the real model name.
+pub fn get_proxy_alias_models() -> Vec<ModelEntry> {
+    vec![
+        ModelEntry { id: "claude-gpt-5-4".to_string(),       display_name: "GPT-5.4 (via Copilot)".to_string(),       tier: "opus".to_string() },
+        ModelEntry { id: "claude-gpt-5-4-mini".to_string(),  display_name: "GPT-5.4 Mini (via Copilot)".to_string(),  tier: "sonnet".to_string() },
+        ModelEntry { id: "claude-gpt-5-4-nano".to_string(),  display_name: "GPT-5.4 Nano (via Copilot)".to_string(),  tier: "haiku".to_string() },
+        ModelEntry { id: "claude-gpt-5".to_string(),         display_name: "GPT-5 (via Copilot)".to_string(),         tier: "opus".to_string() },
+        ModelEntry { id: "claude-gpt-4-1".to_string(),       display_name: "GPT-4.1 (via Copilot)".to_string(),       tier: "sonnet".to_string() },
+        ModelEntry { id: "claude-gpt-4o".to_string(),        display_name: "GPT-4o (via Copilot)".to_string(),        tier: "sonnet".to_string() },
+        ModelEntry { id: "claude-gemini-2-5-pro".to_string(), display_name: "Gemini 2.5 Pro (via Copilot)".to_string(), tier: "opus".to_string() },
     ]
 }
 

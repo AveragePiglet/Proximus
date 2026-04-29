@@ -70,6 +70,22 @@ export const Toolbar: React.FC = () => {
     depResolveRef.current = null;
   }, []);
 
+  const spawnActiveTabPtys = useCallback(async () => {
+    setStatus("Spawning PTYs...");
+    try {
+      const tabs = await invoke<Array<{ id: string; status: string }>>("get_tabs");
+      for (const tab of tabs) {
+        if (tab.status === "active") {
+          await invoke("spawn_tab_pty", { tabId: tab.id }).catch((e: unknown) =>
+            console.warn(`Failed to spawn PTY for tab ${tab.id}:`, e)
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to spawn tab PTYs:", e);
+    }
+  }, []);
+
   const startProxyChain = async () => {
     setError(null);
     setStarting(true);
@@ -106,23 +122,31 @@ export const Toolbar: React.FC = () => {
       return;
     }
 
-    setStatus("Spawning PTYs...");
-    try {
-      const tabs = await invoke<Array<{ id: string; status: string }>>("get_tabs");
-      for (const tab of tabs) {
-        if (tab.status === "active") {
-          await invoke("spawn_tab_pty", { tabId: tab.id }).catch((e: unknown) =>
-            console.warn(`Failed to spawn PTY for tab ${tab.id}:`, e)
-          );
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to spawn tab PTYs:", e);
-    }
+    await spawnActiveTabPtys();
 
     setStatus(null);
     setStarting(false);
   };
+
+  const startForCurrentMode = useCallback(async () => {
+    setError(null);
+    setStarting(true);
+    try {
+      const settings = await invoke<{ cli_mode: string }>("get_app_settings");
+      if (settings.cli_mode === "copilot") {
+        await spawnActiveTabPtys();
+      } else {
+        await startProxyChain();
+        return;
+      }
+    } catch {
+      await startProxyChain();
+      return;
+    } finally {
+      setStatus(null);
+      setStarting(false);
+    }
+  }, [spawnActiveTabPtys]);
 
   const handleRestart = async () => {
     setError(null);
@@ -131,22 +155,16 @@ export const Toolbar: React.FC = () => {
       await invoke("stop_services");
     } catch (_) {}
     await sleep(1000);
-    await startProxyChain();
+    await startForCurrentMode();
   };
 
-  // Auto-start on mount — skip proxy chain if cli_mode is "copilot"
+  // Auto-start on mount. In copilot mode we still need to respawn PTYs for restored tabs.
   useEffect(() => {
     if (!hasAutoStarted.current) {
       hasAutoStarted.current = true;
-      invoke<{ cli_mode: string }>("get_app_settings")
-        .then((s) => {
-          if (s.cli_mode !== "copilot") {
-            startProxyChain();
-          }
-        })
-        .catch(() => startProxyChain()); // if settings fail, start anyway
+      startForCurrentMode();
     }
-  }, []);
+  }, [startForCurrentMode]);
 
   return (
     <>

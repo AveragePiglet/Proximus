@@ -66,7 +66,8 @@ fn start_copilot_proxy(state: State<AppState>, app: AppHandle) -> Result<u16, St
 
 #[tauri::command]
 async fn start_model_rewriter(state: State<'_, AppState>, app: AppHandle, upstream_port: u16) -> Result<u16, String> {
-    state.processes.start_model_rewriter(&app, &state.logs, upstream_port).await
+    let or_key = state.settings.lock().map_err(|e| e.to_string())?.openrouter_api_key.clone();
+    state.processes.start_model_rewriter(&app, &state.logs, upstream_port, or_key).await
 }
 
 #[tauri::command]
@@ -169,7 +170,17 @@ fn create_tab(state: State<AppState>, app: AppHandle, project_path: String) -> R
     let rewriter_port = state.processes.get_rewriter_port();
     let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
+        let effective_model = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            Some(s.openrouter_model.clone())
+        } else {
+            Some(s.project_primary_model.clone())
+        };
+        let effective_fallback = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            None // no fallback when using OpenRouter
+        } else {
+            Some(s.project_secondary_model.clone())
+        };
+        (effective_model, effective_fallback, s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
     let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, memory_dir.exists(), model, fallback_model, dangerous_mode, &cli_mode, Some(copilot_model))?;
 
@@ -221,7 +232,12 @@ fn create_scratch_tab(state: State<AppState>, app: AppHandle) -> Result<String, 
     let rewriter_port = state.processes.get_rewriter_port();
     let (model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.chat_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
+        let effective_model = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            Some(s.openrouter_model.clone())
+        } else {
+            Some(s.chat_model.clone())
+        };
+        (effective_model, s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
     let pty_state = pty::spawn_pty(&app, &tab_id, &project_path, rewriter_port, false, model, None, dangerous_mode, &cli_mode, Some(copilot_model))?;
 
@@ -281,6 +297,13 @@ fn close_tab(state: State<AppState>) -> Result<(), String> {
 
     // Remove PTY (dropping it kills the process)
     let mut tabs = state.tabs.lock().map_err(|e| e.to_string())?;
+    // Cancel any pending auto-launch before dropping so the timed thread
+    // doesn't write to a PTY that is already gone.
+    if let Some(tab) = tabs.get(&tab_id) {
+        if let Some(pty) = tab.pty.as_ref() {
+            pty::cancel_launch(pty);
+        }
+    }
     tabs.remove(&tab_id);
     drop(tabs);
 
@@ -293,11 +316,6 @@ fn close_tab(state: State<AppState>) -> Result<(), String> {
     *state.active_tab.lock().map_err(|e| e.to_string())? = store.active_tab_id.clone();
 
     Ok(())
-}
-
-#[tauri::command]
-fn close_tab_by_id(state: State<AppState>) -> Result<(), String> {
-    close_tab(state)
 }
 
 #[tauri::command]
@@ -368,7 +386,17 @@ fn reopen_tab(state: State<AppState>, app: AppHandle, tab_id: String) -> Result<
     let rewriter_port = state.processes.get_rewriter_port();
     let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
+        let effective_model = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            Some(s.openrouter_model.clone())
+        } else {
+            Some(s.project_primary_model.clone())
+        };
+        let effective_fallback = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            None
+        } else {
+            Some(s.project_secondary_model.clone())
+        };
+        (effective_model, effective_fallback, s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
 
     // Auto-seed Copilot/Claude files on first open in each mode
@@ -449,7 +477,17 @@ fn spawn_tab_pty(state: State<AppState>, app: AppHandle, tab_id: String) -> Resu
     let has_memory = tab.memory_dir.exists();
     let (model, fallback_model, dangerous_mode, cli_mode, copilot_model) = {
         let s = state.settings.lock().map_err(|e| e.to_string())?;
-        (Some(s.project_primary_model.clone()), Some(s.project_secondary_model.clone()), s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
+        let effective_model = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            Some(s.openrouter_model.clone())
+        } else {
+            Some(s.project_primary_model.clone())
+        };
+        let effective_fallback = if !s.openrouter_api_key.is_empty() && s.cli_mode == "claude" {
+            None
+        } else {
+            Some(s.project_secondary_model.clone())
+        };
+        (effective_model, effective_fallback, s.dangerously_skip_permissions, s.cli_mode.clone(), s.copilot_model.clone())
     };
     // Auto-sync on first open: if switching into copilot mode and .github/copilot-instructions.md
     // is missing but CLAUDE.md exists, seed the Copilot files from Claude's layout.
@@ -508,11 +546,11 @@ fn spawn_tab_pty(state: State<AppState>, app: AppHandle, tab_id: String) -> Resu
 }
 
 #[tauri::command]
-fn write_pty(state: State<AppState>, tab_id: String, data: String) -> Result<(), String> {
+fn write_pty(state: State<AppState>, tab_id: String, data: String, bracketed_paste: Option<bool>) -> Result<(), String> {
     let tabs = state.tabs.lock().map_err(|e| e.to_string())?;
     let tab = tabs.get(&tab_id).ok_or("Tab not found")?;
     match tab.pty.as_ref() {
-        Some(pty_state) => pty::write_to_pty(pty_state, &data),
+        Some(pty_state) => pty::write_to_pty(pty_state, &data, bracketed_paste.unwrap_or(false)),
         None => Err("PTY not initialized for this tab".into()),
     }
 }
@@ -641,12 +679,137 @@ fn get_node_content(state: State<AppState>, tab_id: String, node_id: String) -> 
     memory::read_node_file(&tab.memory_dir, &node_id)
 }
 
+#[derive(Clone, serde::Serialize)]
+struct ValidateMemoryResult {
+    passed: bool,
+    output: String,
+}
+
+#[tauri::command]
+fn validate_memory(state: State<AppState>, tab_id: String) -> Result<ValidateMemoryResult, String> {
+    let memory_dir = {
+        let tabs = state.tabs.lock().map_err(|e| e.to_string())?;
+        let tab = tabs.get(&tab_id).ok_or("Tab not found")?;
+        tab.memory_dir.clone()
+    };
+
+    let validate_script = memory_dir.join("tools").join("validate.py");
+    if !validate_script.exists() {
+        return Err("validate.py not found in .node-memory/tools/".into());
+    }
+
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = {
+        let mut cmd = std::process::Command::new("python");
+        cmd.arg(&validate_script);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd.output().map_err(|e| format!("Failed to run validate.py: {}", e))?
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = if stderr.is_empty() { stdout } else { format!("{}\n{}", stdout, stderr) }.trim().to_string();
+
+    Ok(ValidateMemoryResult {
+        passed: output.status.success(),
+        output: combined,
+    })
+}
+
 // ── File explorer commands ───────────────────────────────────────
 
 #[tauri::command]
 async fn open_project_folder(path: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(std::path::Path::new(&path))
         .map_err(|e| e.to_string())
+}
+
+// ── OpenRouter commands ──────────────────────────────────────────
+
+#[tauri::command]
+async fn test_openrouter_key(key: String) -> Result<String, String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("No API key provided".to_string());
+    }
+
+    // /auth/key returns 401 for invalid keys and account info for valid ones
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://openrouter.ai/api/v1/auth/key")
+        .header("Authorization", format!("Bearer {}", trimmed))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+
+    if status == 200 {
+        // Extract label/balance from response if possible
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+            let label = json.pointer("/data/label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("key");
+            let credits = json.pointer("/data/limit_remaining")
+                .and_then(|v| v.as_f64())
+                .map(|c| format!(", ${:.2} remaining", c))
+                .unwrap_or_default();
+            return Ok(format!("✓ Valid — {}{}", label, credits));
+        }
+        Ok("ok".to_string())
+    } else {
+        Err(format!("HTTP {}: {}", status, body.chars().take(200).collect::<String>()))
+    }
+}
+
+// ── OpenRouter model list ─────────────────────────────────────────
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
+pub struct OrModel {
+    pub id: String,
+    pub name: String,
+    pub context_length: u64,
+}
+
+#[tauri::command]
+async fn get_openrouter_models(key: String) -> Result<Vec<OrModel>, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://openrouter.ai/api/v1/models")
+        .header("Authorization", format!("Bearer {}", key.trim()))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status().as_u16()));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<OrModel> = json["data"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?.to_string();
+            let name = m["name"].as_str().unwrap_or(&id).to_string();
+            let context_length = m["context_length"].as_u64().unwrap_or(0);
+            Some(OrModel { id, name, context_length })
+        })
+        .collect();
+
+    // Sort by provider then name
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+
+    Ok(models)
 }
 
 // ── Logging commands ─────────────────────────────────────────────
@@ -658,8 +821,15 @@ fn get_log_history(state: State<AppState>) -> Vec<LogEntry> {
 
 #[tauri::command]
 fn get_app_settings(state: State<AppState>) -> Result<AppSettings, String> {
-    let settings = state.settings.lock().map_err(|e| e.to_string())?;
-    Ok(settings.clone())
+    let mut settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    // Never expose the raw API key over Tauri IPC — the frontend uses a
+    // separate has_openrouter_key flag to know whether a key is set.
+    settings.openrouter_api_key = if settings.openrouter_api_key.is_empty() {
+        String::new()
+    } else {
+        "***".to_string()
+    };
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -906,7 +1076,8 @@ async fn apply_cli_mode(
             }).await.map_err(|e| e.to_string())?;
 
             let copilot_port = state.processes.start_copilot_proxy(&app, &state.logs)?;
-            state.processes.start_model_rewriter(&app, &state.logs, copilot_port).await?;
+            let or_key = state.settings.lock().map_err(|e| e.to_string())?.openrouter_api_key.clone();
+            state.processes.start_model_rewriter(&app, &state.logs, copilot_port, or_key).await?;
             logging::emit_log(&app, &state.logs, "app", "info", "Proxies restarted for Claude CLI mode");
         }
         _ => return Err(format!("Unknown CLI mode: {}", mode)),
@@ -1168,7 +1339,6 @@ pub fn run() {
             get_migration_file_contents,
             update_claude_md_references,
             close_tab,
-            close_tab_by_id,
             close_all_tabs,
             switch_tab,
             get_tabs,
@@ -1187,10 +1357,14 @@ pub fn run() {
             get_memory_graph,
             get_memory_state,
             get_node_content,
+            validate_memory,
             // Logging
             get_log_history,
             // File explorer
             open_project_folder,
+            // OpenRouter
+            test_openrouter_key,
+            get_openrouter_models,
             // Settings
             get_app_settings,
             save_app_settings,

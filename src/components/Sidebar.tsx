@@ -7,10 +7,49 @@ import { useMemoryGraph, MemoryNode } from "../hooks/useMemoryGraph";
 
 type TabId = "graph" | "detail" | "state" | "logs" | "settings";
 
+// SVG icons for the activity bar
+const TabIcons: Record<TabId, React.ReactNode> = {
+  graph: (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="3.5" cy="8.5" r="2" />
+      <circle cx="13.5" cy="3.5" r="2" />
+      <circle cx="13.5" cy="13.5" r="2" />
+      <line x1="5.4" y1="7.4" x2="11.6" y2="4.6" />
+      <line x1="5.4" y1="9.6" x2="11.6" y2="12.4" />
+    </svg>
+  ),
+  detail: (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="2.5" width="12" height="12" rx="2" />
+      <line x1="5.5" y1="6" x2="11.5" y2="6" />
+      <line x1="5.5" y1="8.5" x2="11.5" y2="8.5" />
+      <line x1="5.5" y1="11" x2="9" y2="11" />
+    </svg>
+  ),
+  state: (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8.5" cy="8.5" r="5.5" />
+      <polyline points="8.5,5.5 8.5,8.5 11,10" />
+    </svg>
+  ),
+  logs: (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="3" width="12" height="11" rx="2" />
+      <line x1="5" y1="6.5" x2="12" y2="6.5" />
+      <line x1="5" y1="9" x2="12" y2="9" />
+      <line x1="5" y1="11.5" x2="9" y2="11.5" />
+    </svg>
+  ),
+  settings: (
+    <svg width="17" height="17" viewBox="0 0 17 17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8.5" cy="8.5" r="5.5" />
+      <circle cx="8.5" cy="8.5" r="2" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+};
+
 const TABS: { id: TabId; label: string }[] = [
-  { id: "graph", label: "Graph" },
-  { id: "detail", label: "Detail" },
-  { id: "state", label: "State" },
+  { id: "graph", label: "Memory Graph" },
   { id: "logs", label: "Logs" },
   { id: "settings", label: "Theme" },
 ];
@@ -93,10 +132,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ tabId }) => {
             {activeTab === "graph" && (
               <div className="side-panel-content">
                 <div className="sidebar-section-header">
-                  <h3>Memory Graph</h3>
-                  <button className="btn-icon" onClick={refresh} title="Refresh">
-                    ↻
-                  </button>
+                  <h3 className="side-panel-title">Memory Graph</h3>
+                  <button className="btn-icon" onClick={refresh} title="Refresh">↻</button>
                 </div>
                 {graph.nodes.length > 0 ? (
                   <MemoryGraphView graph={graph} onNodeSelect={handleNodeSelect} />
@@ -111,14 +148,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ tabId }) => {
 
             {activeTab === "detail" && (
               <div className="side-panel-content">
-                <h3>Node Detail</h3>
+                <h3 className="side-panel-title">Node Detail</h3>
                 <NodeDetail node={selectedNode} tabId={tabId} />
               </div>
             )}
 
             {activeTab === "state" && state && (
               <div className="side-panel-content">
-                <h3>State</h3>
+                <h3 className="side-panel-title">State</h3>
                 <div className="state-info">
                   {state.active_task && (
                     <div className="state-field">
@@ -156,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ tabId }) => {
             onClick={() => toggleTab(tab.id)}
             title={tab.label}
           >
-            <span className="activity-tab-label">{tab.label}</span>
+            <span className="activity-tab-icon">{TabIcons[tab.id]}</span>
           </button>
         ))}
       </div>

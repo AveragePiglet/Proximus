@@ -20,6 +20,7 @@ export const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onSwitch, onC
           key={tab.id}
           className={`tab-item${tab.id === activeTabId ? " active" : ""}${tab.tab_type === "chat" ? " chat" : ""}`}
           onClick={() => onSwitch(tab.id)}
+          title={tab.project_path || tab.project_name}
         >
           <span className="tab-name">
             {tab.tab_type === "chat" ? `💬 ${tab.project_name}` : tab.project_name}

@@ -272,6 +272,7 @@ impl ManagedProcesses {
         app: &AppHandle,
         logs: &LogBuffer,
         upstream_port: u16,
+        openrouter_api_key: String,
     ) -> Result<u16, String> {
         // Abort any existing model rewriter task first
         if let Ok(mut handle) = self.model_rewriter_handle.lock() {
@@ -295,7 +296,7 @@ impl ManagedProcesses {
         );
 
         // Start the built-in Rust proxy — awaits until port is confirmed bound
-        let handle = crate::model_rewriter::start(upstream_port, port).await?;
+        let handle = crate::model_rewriter::start(upstream_port, port, openrouter_api_key).await?;
 
         *self.model_rewriter_handle.lock().unwrap() = Some(handle);
         self.ports.lock().unwrap().model_rewriter = port;

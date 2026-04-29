@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -30,10 +30,12 @@ export function useTabStore() {
   const [loading, setLoading] = useState(false);
   const [migrationPending, setMigrationPending] = useState<MigrationPending | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((msg: string, durationMs = 4000) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast(msg);
-    setTimeout(() => setToast(null), durationMs);
+    toastTimerRef.current = setTimeout(() => setToast(null), durationMs);
   }, []);
 
   const refresh = useCallback(async () => {

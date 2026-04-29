@@ -291,6 +291,48 @@ npm run tauri build
 
 ## Patch Notes
 
+### v0.9.2 — Forge Design System (2026-04-26)
+
+**Visual Redesign**
+- **Forge design system** — Complete UI overhaul: deep anthracite substrate (`#0e0f11` base), single amber accent (`#f5a623`), full CSS variable architecture with radius/transition/border tokens
+- **Outfit + JetBrains Mono** — New type system; Outfit for all UI chrome, JetBrains Mono for code/mono elements, replacing system fonts
+- **Merged chrome bar** — TitleBar and Toolbar combined into a single 36px `ChromeBar`, recovering ~38px of vertical space for the terminal. Wordmark, restart button, and window controls all in one row.
+- **Pill status badges** — Proxy service indicators (copilot-proxy, model-rewriter) are now rounded pill chips: green-tinted with glow when running, muted when stopped. Moved to the far-right of the status bar — out of the primary visual field.
+- **Icon activity bar** — Sidebar activity tabs replaced rotated text labels with SVG icons (graph, logs, theme). Hover tooltips via CSS `::after`. Detail and State tabs hidden from the bar (still reachable programmatically).
+- **Pill tabs** — Tab bar items have a visible resting state (bg-elevated fill + border) and an amber left-edge indicator on the active tab. Chat tabs use cyan tint.
+- **Amber sidebar panel titles** — Panel headers (Memory Graph, Logs, Theme) have a 2px amber left border for quick orientation.
+- **Project card polish** — Top-edge colour bar appears on hover, ghost "+ New project" tile in active grid, improved section dividers.
+- **Improved dialogs** — Backdrop blur on all overlays, stronger depth shadows, tighter padding rhythm.
+
+**Usability**
+- **Quick Actions layout** — Workflow actions (Update Memory, Load Memory, Compact, Clear, Validate Memory) group left; Open Folder and Recover pin to the far right with a divider.
+- **Tab path tooltip** — Hovering a tab shows the full filesystem path.
+- **"Starting session…" overlay** — When a tab opens, a centred overlay shows the project name + animated amber dots + "Starting Claude Code…" until the first PTY byte arrives. Fades in after 300ms, clears immediately on output.
+- **OpenRouter disabled state fix** — The OpenRouter model block in Settings now applies the same `settings-field--disabled` dimming as the Copilot section when no OR key is set.
+- **14 legacy themes preserved** — `applyTheme()` backfills the 6 new CSS vars (`--bg-base`, `--bg-active`, `--border-subtle`, `--border-strong`, `--text-disabled`, `--accent`) with sensible fallbacks so all existing themes render correctly under the new system.
+
+---
+
+### v0.9.1 — OpenRouter Integration (2026-04-25)
+
+**New Features**
+- **OpenRouter API key** — Add your key in Settings → OpenRouter; Claude mode routes directly to OpenRouter when a key is set, bypassing copilot-api entirely
+- **Live model list** — The OpenRouter model picker fetches all available models live from the OpenRouter API (450+ models across Anthropic, OpenAI, Google, Meta, DeepSeek, Mistral, xAI, Cohere and more); falls back to a built-in curated list if no key is set. A ⟳ Refresh button reloads the list on demand.
+- **OR model picker in Models section** — OpenRouter model selection is in the Models section alongside Claude and Copilot pickers; the active backend floats to the top
+- **Claude models disabled when OpenRouter active** — Same visual treatment as Copilot/Claude mode toggle — Claude model dropdowns dim with an explanatory note
+- **GitHub Auth bypass notice** — Account section shows a clear banner when OpenRouter is active in Claude mode; directs to Copilot CLI mode if GitHub auth is needed instead
+- **Open Folder buttons** — Project cards and the Quick Actions bar each have an Open Folder button to reveal the project directory in the system file explorer
+
+**Fixes**
+- **API key validation** — Test button now hits `/auth/key` (requires auth) instead of `/models` (public endpoint). Valid keys display account label and remaining credit.
+- **Streaming proxy** — OpenRouter responses are now streamed chunk-by-chunk via `StreamBody` instead of buffered with `resp.bytes().await`. Eliminates the "Retrying in Xs · attempt N/10" timeout loop Claude Code showed previously.
+- **Anthropic header forwarding** — `anthropic-version` and `anthropic-beta` headers are forwarded to OpenRouter so it responds in Anthropic SSE format rather than OpenAI format
+- **HTML error guard** — If OpenRouter returns an HTML error page the proxy converts it to a clean JSON 502 instead of forwarding the page to Claude Code
+- **Double `/v1` path fix** — Proxy now strips the `/v1` prefix from Claude Code's request path before appending to OpenRouter's base URL (`/api/v1`) to avoid `/api/v1/v1/messages`
+- **`ignore_invalid_headers`** — hyper server now accepts `anthropic-beta` and other custom headers that were previously rejected with `serve error: user sent unexpected header`
+
+---
+
 ### v0.9 — CLI Mode Toggle (2026-04-24)
 
 **New Features**

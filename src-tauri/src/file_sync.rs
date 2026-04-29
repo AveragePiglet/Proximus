@@ -134,10 +134,11 @@ fn sync_copilot_to_claude(root: &Path, result: &mut SyncResult) -> Result<(), St
 fn translate_claude_to_copilot(content: &str) -> String {
     let mut out = String::from("<!-- Imported from CLAUDE.md — review for Copilot conventions -->\n\n");
     for line in content.lines() {
+        // Skip import comment headers from previous syncs
+        let trimmed = line.trim();
+        if trimmed.starts_with("<!-- Imported from") && trimmed.ends_with("-->") { continue; }
         // Strip bare slash commands (e.g. /memory, /init on their own line)
-        if line.trim().starts_with('/') && !line.trim().contains(' ') {
-            continue;
-        }
+        if trimmed.starts_with('/') && !trimmed.contains(' ') { continue; }
         out.push_str(line);
         out.push('\n');
     }
@@ -147,7 +148,11 @@ fn translate_claude_to_copilot(content: &str) -> String {
 fn translate_copilot_to_claude(content: &str) -> String {
     let mut out = String::from("# Project Memory Protocol\n\n<!-- Imported from .github/copilot-instructions.md — review for Claude conventions -->\n\n");
     for line in content.lines() {
-        if line.starts_with("<!-- Imported from") { continue; }
+        let trimmed = line.trim();
+        // Skip import comment headers from previous syncs
+        if trimmed.starts_with("<!-- Imported from") && trimmed.ends_with("-->") { continue; }
+        // Skip duplicate "# Project Memory Protocol" headings
+        if trimmed == "# Project Memory Protocol" { continue; }
         out.push_str(line);
         out.push('\n');
     }
@@ -155,9 +160,20 @@ fn translate_copilot_to_claude(content: &str) -> String {
 }
 
 fn translate_skill_to_prompt(name: &str, content: &str) -> String {
+    // Strip any existing import headers before re-wrapping (idempotent)
+    let body = strip_import_headers(content);
+    // Strip YAML frontmatter if already present
+    let body = if body.trim_start().starts_with("---\n") {
+        match body[4..].find("\n---\n") {
+            Some(end) => body[4 + end + 5..].to_string(),
+            None => body,
+        }
+    } else {
+        body
+    };
     format!(
         "---\ndescription: \"Skill: {}\"\nmode: agent\n---\n\n<!-- Imported from .claude/skills/ -->\n\n{}",
-        name, content
+        name, body.trim_start()
     )
 }
 
@@ -171,10 +187,43 @@ fn translate_prompt_to_skill(name: &str, content: &str) -> String {
     } else {
         content
     };
+    // Strip any existing import headers before re-wrapping (idempotent)
+    let body = strip_import_headers(body);
     format!(
         "# {} Skill\n\n<!-- Imported from .github/prompts/ -->\n\n{}",
-        name, body
+        name, body.trim_start()
     )
+}
+
+/// Remove all `<!-- Imported from ... -->` comment lines and the
+/// `# <name> Skill` header line that the sync prepends, so repeated
+/// syncs don't keep accumulating duplicate headers.
+fn strip_import_headers(content: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    let mut skip_blank_after_header = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Drop import comment lines
+        if trimmed.starts_with("<!-- Imported from") && trimmed.ends_with("-->") {
+            skip_blank_after_header = true;
+            continue;
+        }
+        // Drop "# <name> Skill" heading lines
+        if trimmed.starts_with("# ") && trimmed.ends_with(" Skill") {
+            skip_blank_after_header = true;
+            continue;
+        }
+        // Drop one blank line immediately after a stripped header
+        if skip_blank_after_header && trimmed.is_empty() {
+            skip_blank_after_header = false;
+            continue;
+        }
+        skip_blank_after_header = false;
+        lines.push(line);
+    }
+
+    lines.join("\n")
 }
 
 // ── Utilities ────────────────────────────────────────────────────

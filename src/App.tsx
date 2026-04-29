@@ -2,8 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { TitleBar } from "./components/TitleBar";
-import { Toolbar } from "./components/Toolbar";
+import { ChromeBar } from "./components/ChromeBar";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal, TerminalHandle } from "./components/Terminal";
 import { TabBar } from "./components/TabBar";
@@ -42,10 +41,15 @@ function App() {
   const terminalRef = useRef<TerminalHandle | null>(null);
   const proxyAuthUrlOpenedRef = useRef(false);
 
-  // Auto-open settings if not signed in to Copilot
+  // Auto-open settings if not signed in to Copilot.
+  // Skip when OpenRouter is active (cli_mode=claude + OR key set) — Copilot auth is not needed.
   useEffect(() => {
-    invoke<boolean>("get_copilot_auth_status").then((authed) => {
-      if (!authed) setShowSettings(true);
+    invoke<{ cli_mode: string; openrouter_api_key: string }>("get_app_settings").then((s) => {
+      const needsCopilotAuth = s.cli_mode !== "copilot" && !s.openrouter_api_key;
+      if (!needsCopilotAuth) return;
+      invoke<boolean>("get_copilot_auth_status").then((authed) => {
+        if (!authed) setShowSettings(true);
+      }).catch(() => {});
     }).catch(() => {});
   }, []);
 
@@ -55,7 +59,7 @@ function App() {
 
     listen<string>("copilot-auth-output", (e) => {
       const line = e.payload;
-      const codeMatch = line.match(/"([A-Z0-9]{4}-[A-Z0-9]{4})"/);
+      const codeMatch = line.match(/([A-Z0-9]{4}-[A-Z0-9]{4})/i);
       const urlMatch = line.match(/(https:\/\/github\.com\/login\/device[^\s]*)/);
       if (codeMatch) setPendingAuthCode(codeMatch[1]);
       if (urlMatch && !proxyAuthUrlOpenedRef.current) {
@@ -123,8 +127,7 @@ function App() {
 
   return (
     <div className="app">
-      <TitleBar />
-      <Toolbar />
+      <ChromeBar />
       <TabBar
         tabs={activeTabs}
         activeTabId={showProjects ? null : activeTabId}
@@ -147,8 +150,8 @@ function App() {
           />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-            <Terminal tabId={activeTabId} ref={terminalRef} locked={recovering} />
-            <QuickActions tabId={activeTabId} terminalRef={terminalRef} onRecoveringChange={setRecovering} tabType={activeTabs.find(t => t.id === activeTabId)?.tab_type ?? "chat"} />
+            <Terminal tabId={activeTabId} ref={terminalRef} locked={recovering} projectName={activeTabs.find(t => t.id === activeTabId)?.project_name} />
+            <QuickActions tabId={activeTabId} terminalRef={terminalRef} onRecoveringChange={setRecovering} tabType={activeTabs.find(t => t.id === activeTabId)?.tab_type ?? "chat"} projectPath={activeTabs.find(t => t.id === activeTabId)?.project_path} />
             <StatusBar tabId={activeTabId} />
           </div>
         )}

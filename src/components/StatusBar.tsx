@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useTabStatus } from "../hooks/useTabStatus";
+import { StatusBadge } from "./StatusBadge";
+import { useProcessStatus } from "../hooks/useProcessStatus";
 
 interface StatusBarProps {
   tabId: string;
@@ -37,6 +39,7 @@ function contextColor(pct: number): string {
 
 export const StatusBar: React.FC<StatusBarProps> = ({ tabId }) => {
   const status = useTabStatus(tabId);
+  const processes = useProcessStatus();
   const [, setTick] = useState(0);
 
   // Re-render every 15s so duration/ago stay fresh
@@ -78,6 +81,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({ tabId }) => {
           <span className="status-bar-label">💰 ${status.cost_usd.toFixed(2)}</span>
         </div>
       )}
+      {/* Process badges — pushed to far right */}
+      <div className="status-bar-spacer" />
+      {processes.map((p) => (
+        <StatusBadge key={p.name} {...p} />
+      ))}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 interface TerminalProps {
   tabId: string;
   locked?: boolean;
+  projectName?: string;
 }
 
 interface PtyOutputEvent {
@@ -20,9 +21,10 @@ export interface TerminalHandle {
   getBufferText: (maxLines?: number) => string;
 }
 
-export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, locked }, ref) => {
+export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, locked, projectName }, ref) => {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
+  const [ptyStarted, setPtyStarted] = useState(false);
 
   useImperativeHandle(ref, () => ({
     getBufferText: (maxLines = 200) => {
@@ -78,34 +80,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
     fitAddon.fit();
     xtermRef.current = term;
 
-    // Undo buffer: groups of characters chunked by typing pauses
-    // Each entry is a group of chars typed within UNDO_GROUP_MS of each other
-    const UNDO_GROUP_MS = 600;
-    const undoGroups: string[][] = []; // each group is an array of chars
-    let lastInputTime = 0;
-
-    const pushToUndo = (chars: string[]) => {
-      const now = Date.now();
-      if (undoGroups.length === 0 || now - lastInputTime > UNDO_GROUP_MS) {
-        // Start a new group
-        undoGroups.push([...chars]);
-      } else {
-        // Append to current group
-        undoGroups[undoGroups.length - 1].push(...chars);
-      }
-      lastInputTime = now;
-    };
-
-    const popFromUndo = () => {
-      // Remove the last character from the latest group
-      if (undoGroups.length === 0) return;
-      undoGroups[undoGroups.length - 1].pop();
-      if (undoGroups[undoGroups.length - 1].length === 0) {
-        undoGroups.pop();
-      }
-    };
-
-    // Intercept Ctrl+C (copy), Ctrl+V (paste), Ctrl+Z (undo)
+    // Intercept Ctrl+C (copy), Ctrl+V (paste)
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       if (event.ctrlKey && event.key === "c" && term.hasSelection()) {
@@ -117,21 +92,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
         // preventDefault stops the browser from also firing a paste event
         event.preventDefault();
         navigator.clipboard.readText().then((text) => {
-          // Paste is always its own undo group
-          undoGroups.push([...text]);
-          lastInputTime = Date.now();
-          invoke("write_pty", { tabId, data: text }).catch(() => {});
+          invoke("write_pty", { tabId, data: text, bracketedPaste: true }).catch(() => {});
         });
-        return false;
-      }
-      if (event.ctrlKey && event.key === "z") {
-        event.preventDefault();
-        if (undoGroups.length > 0) {
-          const group = undoGroups.pop()!;
-          // Send one backspace per character in the group
-          const backspaces = "\x7f".repeat(group.length);
-          invoke("write_pty", { tabId, data: backspaces }).catch(() => {});
-        }
         return false;
       }
       return true;
@@ -139,17 +101,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
 
     // Send keystrokes to this tab's PTY
     term.onData((data) => {
-      // Track input for undo buffer
-      if (data === "\r" || data === "\n") {
-        // Enter pressed — clear undo history
-        undoGroups.length = 0;
-      } else if (data === "\x7f" || data === "\x08") {
-        // Backspace — pop one char from undo to stay in sync
-        popFromUndo();
-      } else if (data.length === 1 && data >= " ") {
-        // Regular printable character
-        pushToUndo([data]);
-      }
       invoke("write_pty", { tabId, data }).catch(() => {});
     });
 
@@ -160,14 +111,21 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
       ptyMessageCount++;
       if (ptyMessageCount === 1) {
         term.clear();
+        setPtyStarted(true);
       }
       term.write(event.payload.data);
     });
 
-    // Handle resize
+    // Handle resize — coalesce via requestAnimationFrame so drag-resizing doesn't
+    // flood the IPC channel with hundreds of resize_pty_cmd calls per second.
+    let rafHandle: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      invoke("resize_pty_cmd", { tabId, rows: term.rows, cols: term.cols }).catch(() => {});
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+      rafHandle = requestAnimationFrame(() => {
+        rafHandle = null;
+        fitAddon.fit();
+        invoke("resize_pty_cmd", { tabId, rows: term.rows, cols: term.cols }).catch(() => {});
+      });
     });
     resizeObserver.observe(termRef.current);
 
@@ -185,13 +143,31 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(({ tabId, lock
       unsubTheme();
       unlistenPty.then((fn) => fn());
       resizeObserver.disconnect();
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
       term.dispose();
     };
   }, [tabId]);
 
+  // Reset "started" state when tab changes so overlay shows again
+  useEffect(() => { setPtyStarted(false); }, [tabId]);
+
   return (
     <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", clipPath: "inset(0 0 14px 0)" }}>
       <div ref={termRef} className="terminal-container" />
+      {!ptyStarted && !locked && (
+        <div className="terminal-starting-overlay">
+          <div className="terminal-starting-content">
+            <span className="terminal-starting-icon">⚡</span>
+            <span className="terminal-starting-name">{projectName || "Session"}</span>
+            <span className="terminal-starting-dots">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span className="terminal-starting-label">Starting Claude Code…</span>
+          </div>
+        </div>
+      )}
       {locked && (
         <div className="terminal-lock-overlay">
           <span>Recovering session...</span>

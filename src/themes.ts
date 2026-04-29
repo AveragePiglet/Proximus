@@ -31,6 +31,50 @@ export function onThemeChange(fn: ThemeListener): () => void {
 }
 
 export const themes: Theme[] = [
+  // ─── Forge (default) ───
+  {
+    name: "forge",
+    label: "Forge",
+    colors: {
+      "--bg-base":        "#0e0f11",
+      "--bg-primary":     "#131519",
+      "--bg-secondary":   "#1a1d23",
+      "--bg-hover":       "#252a34",
+      "--bg-elevated":    "#1f232b",
+      "--bg-active":      "#2b3040",
+      "--text-primary":   "#e8eaf0",
+      "--text-secondary": "#8b91a8",
+      "--text-tertiary":  "#4e5470",
+      "--text-disabled":  "#363b50",
+      "--accent":         "#f5a623",
+      "--accent-dim":     "#c4821a",
+      "--accent-blue":    "#6b9cf5",
+      "--accent-green":   "#5ec97e",
+      "--accent-red":     "#e8637a",
+      "--accent-cyan":    "#56c3e8",
+      "--accent-yellow":  "#f5a623",
+      "--accent-purple":  "#a98cf7",
+      "--border":         "#252a34",
+      "--border-subtle":  "#1c2028",
+      "--border-strong":  "#363d50",
+      "--scrollbar-thumb": "#252a34",
+      "--scrollbar-track": "#0e0f11",
+    },
+    terminal: {
+      background: "#0e0f11",
+      foreground: "#e8eaf0",
+      cursor: "#f5a623",
+      selectionBackground: "#2b3040",
+      black: "#1a1d23",
+      red: "#e8637a",
+      green: "#5ec97e",
+      yellow: "#f5a623",
+      blue: "#6b9cf5",
+      magenta: "#a98cf7",
+      cyan: "#56c3e8",
+      white: "#e8eaf0",
+    },
+  },
   // ─── Dark Themes ───
   {
     name: "tokyonight",
@@ -571,14 +615,22 @@ export function applyTheme(themeName: string): void {
   for (const [key, value] of Object.entries(theme.colors)) {
     root.style.setProperty(key, value);
   }
-  localStorage.setItem(STORAGE_KEY, themeName);
 
-  // Notify listeners (terminal, etc.)
+  // Ensure new design-system vars have sensible fallbacks for legacy themes
+  const c = theme.colors;
+  if (!c["--bg-base"])        root.style.setProperty("--bg-base",        c["--bg-secondary"] ?? "#0e0f11");
+  if (!c["--bg-active"])      root.style.setProperty("--bg-active",       c["--bg-hover"] ?? "#2b3040");
+  if (!c["--border-subtle"])  root.style.setProperty("--border-subtle",   c["--border"] ?? "#252a34");
+  if (!c["--border-strong"])  root.style.setProperty("--border-strong",   c["--border"] ?? "#363d50");
+  if (!c["--text-disabled"])  root.style.setProperty("--text-disabled",   c["--text-tertiary"] ?? "#363b50");
+  if (!c["--accent"])         root.style.setProperty("--accent",          c["--accent-blue"] ?? "#f5a623");
+
+  localStorage.setItem(STORAGE_KEY, themeName);
   listeners.forEach((fn) => fn(theme));
 }
 
 export function getSavedTheme(): string {
-  return localStorage.getItem(STORAGE_KEY) || "tokyonight";
+  return localStorage.getItem(STORAGE_KEY) || "forge";
 }
 
 export function loadSavedTheme(): void {
